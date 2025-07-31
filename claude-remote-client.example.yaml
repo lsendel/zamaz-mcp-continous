@@ -1,0 +1,65 @@
+# Claude Remote Client Configuration Example
+# Copy this file to claude-remote-client.yaml and customize for your setup
+
+# Slack configuration
+slack:
+  # Bot token from Slack App settings (required)
+  # Can also be set via SLACK_BOT_TOKEN environment variable
+  bot_token: "xoxb-your-bot-token-here"
+  
+  # App token for Socket Mode (optional, for Socket Mode apps)
+  # Can also be set via SLACK_APP_TOKEN environment variable
+  app_token: "xapp-your-app-token-here"
+  
+  # Channel ID where the bot will operate (required)
+  # Can also be set via SLACK_CHANNEL_ID environment variable
+  channel_id: "C1234567890"
+  
+  # Signing secret for request verification (optional)
+  # Can also be set via SLACK_SIGNING_SECRET environment variable
+  signing_secret: "your-signing-secret-here"
+
+# Claude CLI configuration
+claude:
+  # Path to Claude CLI executable (default: "claude")
+  # Can also be set via CLAUDE_CLI_PATH environment variable
+  cli_path: "claude"
+  
+  # Default arguments passed to Claude CLI
+  default_args:
+    - "--dangerously-skip-permissions"
+  
+  # Timeout for Claude CLI operations in seconds (default: 300)
+  # Can also be set via CLAUDE_TIMEOUT environment variable
+  timeout: 300
+
+# Project configurations
+projects:
+  - name: "my-web-app"
+    path: "~/projects/web-app"
+    description: "Main web application project"
+  
+  - name: "api-service"
+    path: "~/projects/api"
+    description: "Backend API service"
+  
+  - name: "mobile-app"
+    path: "~/projects/mobile"
+    description: "Mobile application"
+
+# General application settings
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+# Can also be set via LOG_LEVEL environment variable
+log_level: "INFO"
+
+# Directory for storing application data
+# Can also be set via DATA_DIR environment variable
+data_dir: "~/.claude-remote-client"
+
+# Maximum number of concurrent Claude sessions
+# Can also be set via MAX_SESSIONS environment variable
+max_sessions: 10
+
+# Maximum size of task queue
+# Can also be set via TASK_QUEUE_SIZE environment variable
+task_queue_size: 100

@@ -1,0 +1,6 @@
+{
+    "sonarlint.connectedMode.project": {
+        "connectionId": "lsendel",
+        "projectKey": "lsendel_sub-agents"
+    }
+}
