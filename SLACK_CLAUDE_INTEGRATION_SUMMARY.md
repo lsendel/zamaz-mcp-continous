@@ -44,12 +44,7 @@ User sees Claude's response
 
 ## 🔧 Current Configuration
 
-```env
-SLACK_BOT_TOKEN=xoxb-XXXX-XXXX-XXXXXXXXXXXX
-SLACK_CHANNEL=CXXXXXXXXXX
-CLAUDE_CLI_PATH=/path/to/claude
-PROJECT_PATH=/path/to/project
-```
+
 
 ## ⚠️ Limitation
 
