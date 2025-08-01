@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Dict, Any
 import uuid
-
+from croniter import croniter
 
 class TaskStatus(Enum):
     """Status enumeration for tasks and sessions."""
@@ -46,6 +46,7 @@ class ClaudeSession:
     last_activity: datetime = field(default_factory=datetime.now)
     process_id: Optional[int] = None
     conversation_history: List[Dict[str, Any]] = field(default_factory=list)
+    claude_session_id: Optional[str] = None  # Claude Code's internal session ID
     
     def __post_init__(self):
         """Post-initialization to set project name from path."""
@@ -82,7 +83,8 @@ class ClaudeSession:
             "created_at": self.created_at.isoformat(),
             "last_activity": self.last_activity.isoformat(),
             "process_id": self.process_id,
-            "conversation_history": self.conversation_history
+            "conversation_history": self.conversation_history,
+            "claude_session_id": self.claude_session_id
         }
 
 
@@ -177,22 +179,13 @@ class CronSchedule:
     
     def calculate_next_run(self):
         """Calculate the next execution time based on cron pattern."""
-        # Simplified cron calculation - in real implementation would use croniter
-        from datetime import timedelta
+        if not self.cron_pattern or not croniter.is_valid(self.cron_pattern):
+            self.next_run = None
+            return
         
         now = datetime.now()
-        if self.cron_pattern == "0 */2 * * *":  # Every 2 hours
-            self.next_run = now + timedelta(hours=2)
-        elif self.cron_pattern == "0 0 * * *":  # Daily at midnight
-            self.next_run = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        elif self.cron_pattern == "0 0 * * 0":  # Weekly on Sunday
-            days_until_sunday = (6 - now.weekday()) % 7
-            if days_until_sunday == 0:
-                days_until_sunday = 7
-            self.next_run = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
-        else:
-            # Default to 1 hour for unknown patterns
-            self.next_run = now + timedelta(hours=1)
+        iterator = croniter(self.cron_pattern, now)
+        self.next_run = iterator.get_next(datetime)
     
     def should_run(self) -> bool:
         """Check if the schedule should run now."""

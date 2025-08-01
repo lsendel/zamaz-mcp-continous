@@ -12,6 +12,8 @@ from typing import Dict, List, Optional, Any, AsyncIterator
 from datetime import datetime
 from pathlib import Path
 import uuid
+import aiofiles
+import aiofiles.os
 
 from ..models import QueuedTask, TaskStatus
 from ..config import Config
@@ -471,14 +473,15 @@ class QueueManager:
         """Convert task to dictionary for serialization."""
         return task.to_dict()
     
-    def _load_queues(self) -> None:
+    async def _load_queues(self) -> None:
         """Load queues from persistent storage."""
-        if not self.queues_file.exists():
+        if not await aiofiles.os.path.exists(self.queues_file):
             return
         
         try:
-            with open(self.queues_file, 'r') as f:
-                data = json.load(f)
+            async with aiofiles.open(self.queues_file, 'r') as f:
+                content = await f.read()
+                data = json.loads(content)
             
             for queue_name, tasks_data in data.get('queues', {}).items():
                 self.queues[queue_name] = []
@@ -513,7 +516,7 @@ class QueueManager:
         except Exception as e:
             self.logger.error(f"Error loading queues: {e}")
     
-    def _save_queues(self) -> None:
+    async def _save_queues(self) -> None:
         """Save queues to persistent storage."""
         try:
             data = {
@@ -526,8 +529,8 @@ class QueueManager:
                     self._task_to_dict(task) for task in queue
                 ]
             
-            with open(self.queues_file, 'w') as f:
-                json.dump(data, f, indent=2)
+            async with aiofiles.open(self.queues_file, 'w') as f:
+                await f.write(json.dumps(data, indent=2))
         
         except Exception as e:
             self.logger.error(f"Error saving queues: {e}")

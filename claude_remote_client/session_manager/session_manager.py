@@ -12,6 +12,7 @@ import uuid
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from pathlib import Path
+import aiofiles
 
 from ..models import ClaudeSession, SessionStatus
 from ..config import Config, ClaudeConfig
@@ -121,51 +122,64 @@ class SessionManager:
         if len(self.sessions) >= self.max_sessions:
             raise SessionError(f"Maximum number of sessions ({self.max_sessions}) reached")
         
+        session_id = session_id or str(uuid.uuid4())
+        if session_id in self.sessions:
+            raise SessionError(f"Session with ID {session_id} already exists")
+
+        session = ClaudeSession(
+            session_id=session_id,
+            project_path=project_path,
+            project_name=Path(project_path).name
+        )
+        subprocess_handler = SubprocessClaudeHandler(self.config.claude) # Initialize to a mock object
+        message_streamer = MessageStreamer(subprocess_handler) # Initialize to a mock object
+
         try:
-            # Generate unique session ID if not provided
-            if session_id is None:
-                session_id = str(uuid.uuid4())
-            
-            # Check if session ID already exists
-            if session_id in self.sessions:
-                raise SessionError(f"Session with ID {session_id} already exists")
-            
-            session = ClaudeSession(
-                session_id=session_id,
-                project_path=project_path,
-                project_name=Path(project_path).name
-            )
-            
-            # Create subprocess handler
-            subprocess_handler = SubprocessClaudeHandler(self.config.claude)
-            
-            # Create message streamer
-            message_streamer = MessageStreamer(subprocess_handler)
-            
-            # Start the Claude process
-            await subprocess_handler.start_process(session)
-            
-            # Start streaming
-            await message_streamer.start_streaming(session)
-            
-            # Store session and handlers
+            subprocess_handler = await self._create_subprocess_handler(session)
+            message_streamer = await self._create_message_streamer(session, subprocess_handler)
+
             self.sessions[session.session_id] = session
             self.subprocess_handlers[session.session_id] = subprocess_handler
             self.message_streamers[session.session_id] = message_streamer
-            
-            # Set as active session if it's the first one
-            if not self.active_session_id:
-                self.active_session_id = session.session_id
-            
+
+            if self.active_session_id:
+                # Set previous active session to inactive
+                if self.active_session_id in self.sessions:
+                    self.sessions[self.active_session_id].status = SessionStatus.INACTIVE
+                
+            self.active_session_id = session.session_id
+
             self.logger.info(f"Created session {session.session_id} for project: {project_path}")
-            
-            # Save sessions
             await self._save_sessions()
-            
+
             return session
-        
         except Exception as e:
+            # Cleanup partially created resources
+            if session.session_id in self.message_streamers:
+                await self.message_streamers[session.session_id].stop_streaming()
+                del self.message_streamers[session.session_id]
+            if session.session_id in self.subprocess_handlers:
+                await self.subprocess_handlers[session.session_id].terminate_process()
+                del self.subprocess_handlers[session.session_id]
+
+            if session.session_id in self.sessions:
+                del self.sessions[session.session_id]
             raise SessionError(f"Failed to create session: {str(e)}")
+
+    async def _create_subprocess_handler(self, session: ClaudeSession) -> SubprocessClaudeHandler:
+        subprocess_handler = SubprocessClaudeHandler(self.config.claude)
+        # Check if we have a Claude session ID to resume
+        resume_session = session.claude_session_id if session.claude_session_id else None
+        await subprocess_handler.start_process(session, resume_claude_session=resume_session)
+        # Store the Claude session ID
+        if subprocess_handler.get_claude_session_id():
+            session.claude_session_id = subprocess_handler.get_claude_session_id()
+        return subprocess_handler
+
+    async def _create_message_streamer(self, session: ClaudeSession, subprocess_handler: SubprocessClaudeHandler) -> MessageStreamer:
+        message_streamer = MessageStreamer(subprocess_handler)
+        await message_streamer.start_streaming(session)
+        return message_streamer
     
     async def switch_session(self, session_id: str) -> ClaudeSession:
         """
@@ -286,11 +300,22 @@ class SessionManager:
                 self.active_session_id = None
                 
                 # Try to switch to another active session
+                # Find the most recently active session that is not the one being terminated
+                candidate_session_id = None
+                latest_activity = datetime.min
+
                 for other_id, other_session in self.sessions.items():
-                    if other_id != session_id and other_session.status == SessionStatus.ACTIVE:
-                        self.active_session_id = other_id
-                        break
-            
+                    if other_id != session_id and other_session.status == SessionStatus.ACTIVE and other_session.last_activity > latest_activity:
+                        candidate_session_id = other_id
+                        latest_activity = other_session.last_activity
+                
+                if candidate_session_id:
+                    self.active_session_id = candidate_session_id
+
+            # Update session status
+            session.status = SessionStatus.INACTIVE
+            session.process_id = None
+
             # Remove session
             del self.sessions[session_id]
             
@@ -362,8 +387,9 @@ class SessionManager:
             return
         
         try:
-            with open(self.sessions_file, 'r') as f:
-                session_data = json.load(f)
+            async with aiofiles.open(self.sessions_file, 'r') as f:
+                content = await f.read()
+                session_data = json.loads(content)
             
             for session_dict in session_data.get('sessions', []):
                 try:
@@ -418,8 +444,8 @@ class SessionManager:
                 }
                 session_data['sessions'].append(session_dict)
             
-            with open(self.sessions_file, 'w') as f:
-                json.dump(session_data, f, indent=2)
+            async with aiofiles.open(self.sessions_file, 'w') as f:
+                await f.write(json.dumps(session_data, indent=2))
         
         except Exception as e:
             self.logger.error(f"Error saving sessions to {self.sessions_file}: {e}")
@@ -428,8 +454,21 @@ class SessionManager:
         """Background task for session cleanup."""
         while self.is_running:
             try:
-                await asyncio.sleep(60)  # Check every minute
-                
+                # Create a task for each session that will sleep until it times out
+                timeout_tasks = []
+                for session in self.sessions.values():
+                    if session.status in [SessionStatus.INACTIVE, SessionStatus.ERROR]:
+                        inactive_time = (datetime.now() - session.last_activity).total_seconds()
+                        sleep_time = self.session_timeout - inactive_time
+                        if sleep_time > 0:
+                            timeout_tasks.append(asyncio.create_task(asyncio.sleep(sleep_time)))
+
+                # Wait for any session to time out, or for 60 seconds
+                if timeout_tasks:
+                    await asyncio.wait(timeout_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=60)
+                else:
+                    await asyncio.sleep(60)
+
                 # Health check all sessions
                 await self.health_check_sessions()
                 
@@ -494,3 +533,89 @@ class SessionManager:
                 for status in SessionStatus
             }
         }
+    
+    async def execute_non_interactive(self, command: str, project_path: str, 
+                                      output_format: str = "text", timeout: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Execute a command in non-interactive mode using Claude Code CLI.
+        
+        Args:
+            command: Command to execute
+            project_path: Project directory path
+            output_format: Output format (text, json)
+            timeout: Optional timeout
+        
+        Returns:
+            Dict containing command response
+        
+        Raises:
+            SessionError: If execution fails
+        """
+        try:
+            # Create a temporary handler for non-interactive execution
+            handler = SubprocessClaudeHandler(self.config.claude)
+            handler.output_format = output_format
+            
+            # Create a minimal session for the project path
+            temp_session = ClaudeSession(
+                session_id=str(uuid.uuid4()),
+                project_path=project_path
+            )
+            handler.session = temp_session
+            
+            # Execute command
+            result = await handler.execute_command(command, timeout)
+            
+            self.logger.info(f"Executed non-interactive command in {project_path}")
+            return result
+            
+        except Exception as e:
+            raise SessionError(f"Failed to execute command: {str(e)}")
+    
+    async def continue_claude_session(self, session_id: str) -> ClaudeSession:
+        """
+        Continue the most recent Claude Code session for a given session.
+        
+        Args:
+            session_id: Session ID to continue
+        
+        Returns:
+            ClaudeSession: The continued session
+        
+        Raises:
+            SessionError: If continuation fails
+        """
+        if session_id not in self.sessions:
+            raise SessionError(f"Session {session_id} not found")
+        
+        session = self.sessions[session_id]
+        handler = self.subprocess_handlers.get(session_id)
+        
+        if not handler:
+            raise SessionError(f"No handler found for session {session_id}")
+        
+        try:
+            await handler.continue_session()
+            session.update_activity()
+            
+            # Update Claude session ID if changed
+            if handler.get_claude_session_id():
+                session.claude_session_id = handler.get_claude_session_id()
+            
+            self.logger.info(f"Continued Claude session {session_id}")
+            return session
+            
+        except Exception as e:
+            raise SessionError(f"Failed to continue session: {str(e)}")
+    
+    def get_claude_session_mapping(self) -> Dict[str, Optional[str]]:
+        """
+        Get mapping of internal session IDs to Claude Code session IDs.
+        
+        Returns:
+            Dict mapping internal session IDs to Claude session IDs
+        """
+        mapping = {}
+        for session_id, session in self.sessions.items():
+            mapping[session_id] = session.claude_session_id
+        return mapping

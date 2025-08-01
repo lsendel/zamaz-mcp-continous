@@ -1,0 +1,82 @@
+# Claude Remote Client systemd service file
+# Install to: /etc/systemd/system/claude-remote-client.service
+#
+# Installation:
+#   sudo cp systemd/claude-remote-client.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable claude-remote-client
+#   sudo systemctl start claude-remote-client
+#
+# Management:
+#   sudo systemctl status claude-remote-client
+#   sudo systemctl restart claude-remote-client
+#   sudo systemctl stop claude-remote-client
+#   sudo journalctl -u claude-remote-client -f
+
+[Unit]
+Description=Claude Remote Client - Slack to Claude AI Bridge
+Documentation=https://github.com/your-org/claude-remote-client
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=claude-bot
+Group=claude-bot
+ExecStart=/usr/local/bin/claude-remote-client --config /etc/claude-remote-client/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Working directory
+WorkingDirectory=/var/lib/claude-remote-client
+
+# Environment variables
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/etc/claude-remote-client/environment
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/claude-remote-client /var/log/claude-remote-client
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictNamespaces=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=1024
+
+# Additional monitoring
+WatchdogSec=60
+NotifyAccess=main
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-remote-client
+
+# Process management
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

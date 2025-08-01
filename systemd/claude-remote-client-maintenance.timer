@@ -1,0 +1,15 @@
+# Claude Remote Client maintenance timer
+# Runs maintenance tasks daily at 2 AM
+
+[Unit]
+Description=Claude Remote Client Maintenance Timer
+Documentation=https://github.com/your-org/claude-remote-client
+Requires=claude-remote-client-maintenance.service
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,269 @@
+#!/bin/bash
+# Claude Remote Client Maintenance Script
+# Performs routine maintenance tasks
+
+set -euo pipefail
+
+# Configuration
+SCRIPT_NAME="claude-remote-client-maintenance"
+DATA_DIR="${CLAUDE_REMOTE_CLIENT_DATA_DIR:-/var/lib/claude-remote-client}"
+LOG_DIR="${CLAUDE_REMOTE_CLIENT_LOG_DIR:-/var/log/claude-remote-client}"
+CONFIG_DIR="${CLAUDE_REMOTE_CLIENT_CONFIG_DIR:-/etc/claude-remote-client}"
+MAX_LOG_SIZE="100M"
+MAX_LOG_FILES=7
+MAX_SESSION_AGE_DAYS=7
+MAX_QUEUE_AGE_DAYS=30
+
+# Logging function
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$SCRIPT_NAME] $1" >&2
+}
+
+# Error handling
+error_exit() {
+    log "ERROR: $1"
+    exit 1
+}
+
+# Check if running as correct user
+check_user() {
+    if [[ $EUID -eq 0 ]]; then
+        error_exit "This script should not be run as root"
+    fi
+    
+    local expected_user="claude-bot"
+    local current_user=$(whoami)
+    
+    if [[ "$current_user" != "$expected_user" ]]; then
+        log "WARNING: Running as '$current_user', expected '$expected_user'"
+    fi
+}
+
+# Rotate logs
+rotate_logs() {
+    log "Starting log rotation..."
+    
+    if [[ ! -d "$LOG_DIR" ]]; then
+        log "Log directory does not exist: $LOG_DIR"
+        return 0
+    fi
+    
+    # Find and rotate large log files
+    find "$LOG_DIR" -name "*.log" -size +$MAX_LOG_SIZE -type f | while read -r logfile; do
+        log "Rotating large log file: $logfile"
+        
+        # Create rotated filename with timestamp
+        local rotated="${logfile}.$(date +%Y%m%d-%H%M%S)"
+        
+        # Move current log to rotated name
+        mv "$logfile" "$rotated"
+        
+        # Compress rotated log
+        gzip "$rotated"
+        
+        # Create new empty log file
+        touch "$logfile"
+        chmod 644 "$logfile"
+        
+        log "Rotated and compressed: $logfile -> ${rotated}.gz"
+    done
+    
+    # Remove old rotated logs
+    find "$LOG_DIR" -name "*.log.*.gz" -mtime +$MAX_LOG_FILES -type f -delete
+    
+    log "Log rotation completed"
+}
+
+# Clean up old sessions
+cleanup_sessions() {
+    log "Starting session cleanup..."
+    
+    local sessions_dir="$DATA_DIR/sessions"
+    
+    if [[ ! -d "$sessions_dir" ]]; then
+        log "Sessions directory does not exist: $sessions_dir"
+        return 0
+    fi
+    
+    # Find and remove old session files
+    local removed_count=0
+    find "$sessions_dir" -name "*.json" -mtime +$MAX_SESSION_AGE_DAYS -type f | while read -r session_file; do
+        log "Removing old session file: $session_file"
+        rm -f "$session_file"
+        ((removed_count++))
+    done
+    
+    # Clean up empty session directories
+    find "$sessions_dir" -type d -empty -delete 2>/dev/null || true
+    
+    log "Session cleanup completed (removed $removed_count files)"
+}
+
+# Clean up old queue data
+cleanup_queues() {
+    log "Starting queue cleanup..."
+    
+    local queues_dir="$DATA_DIR/queues"
+    
+    if [[ ! -d "$queues_dir" ]]; then
+        log "Queues directory does not exist: $queues_dir"
+        return 0
+    fi
+    
+    # Find and remove old completed queue files
+    local removed_count=0
+    find "$queues_dir" -name "*.json" -mtime +$MAX_QUEUE_AGE_DAYS -type f | while read -r queue_file; do
+        # Check if queue is completed (basic check)
+        if grep -q '"status": "completed"' "$queue_file" 2>/dev/null; then
+            log "Removing old completed queue file: $queue_file"
+            rm -f "$queue_file"
+            ((removed_count++))
+        fi
+    done
+    
+    log "Queue cleanup completed (removed $removed_count files)"
+}
+
+# Clean up temporary files
+cleanup_temp_files() {
+    log "Starting temporary file cleanup..."
+    
+    local temp_dirs=("$DATA_DIR/tmp" "/tmp/claude-remote-client-*")
+    local removed_count=0
+    
+    for temp_pattern in "${temp_dirs[@]}"; do
+        # Use find with -path to handle patterns safely
+        find /tmp -path "$temp_pattern" -mtime +1 -type f -delete 2>/dev/null || true
+        find "$DATA_DIR" -name "tmp" -type d -exec find {} -mtime +1 -type f -delete \; 2>/dev/null || true
+    done
+    
+    log "Temporary file cleanup completed"
+}
+
+# Check disk space
+check_disk_space() {
+    log "Checking disk space..."
+    
+    local data_usage=$(du -sh "$DATA_DIR" 2>/dev/null | cut -f1 || echo "unknown")
+    local log_usage=$(du -sh "$LOG_DIR" 2>/dev/null | cut -f1 || echo "unknown")
+    
+    log "Data directory usage: $data_usage ($DATA_DIR)"
+    log "Log directory usage: $log_usage ($LOG_DIR)"
+    
+    # Check available space
+    local available_space=$(df -h "$DATA_DIR" | awk 'NR==2 {print $4}')
+    log "Available space: $available_space"
+    
+    # Warn if less than 1GB available
+    local available_bytes=$(df "$DATA_DIR" | awk 'NR==2 {print $4}')
+    if [[ $available_bytes -lt 1048576 ]]; then  # 1GB in KB
+        log "WARNING: Low disk space available: $available_space"
+    fi
+}
+
+# Validate configuration
+validate_config() {
+    log "Validating configuration..."
+    
+    if [[ -f "$CONFIG_DIR/config.yaml" ]]; then
+        # Basic YAML syntax check
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "import yaml; yaml.safe_load(open('$CONFIG_DIR/config.yaml'))" 2>/dev/null || {
+                log "WARNING: Configuration file has YAML syntax errors"
+            }
+        fi
+        log "Configuration file exists and appears valid"
+    else
+        log "WARNING: Configuration file not found: $CONFIG_DIR/config.yaml"
+    fi
+}
+
+# Check service health
+check_service_health() {
+    log "Checking service health..."
+    
+    # Check if systemd service is running
+    if systemctl is-active --quiet claude-remote-client 2>/dev/null; then
+        log "Service is active"
+        
+        # Check if process is responsive
+        if pgrep -f claude-remote-client >/dev/null 2>&1; then
+            log "Process is running"
+        else
+            log "WARNING: Service is active but process not found"
+        fi
+    else
+        log "WARNING: Service is not active"
+    fi
+}
+
+# Generate maintenance report
+generate_report() {
+    log "Generating maintenance report..."
+    
+    local report_file="$DATA_DIR/maintenance-report-$(date +%Y%m%d).txt"
+    
+    cat > "$report_file" << EOF
+Claude Remote Client Maintenance Report
+Generated: $(date)
+========================================
+
+System Information:
+- Hostname: $(hostname)
+- Uptime: $(uptime)
+- Load Average: $(cat /proc/loadavg)
+- Memory Usage: $(free -h | grep Mem)
+
+Directory Usage:
+- Data Directory: $(du -sh "$DATA_DIR" 2>/dev/null | cut -f1) ($DATA_DIR)
+- Log Directory: $(du -sh "$LOG_DIR" 2>/dev/null | cut -f1) ($LOG_DIR)
+- Available Space: $(df -h "$DATA_DIR" | awk 'NR==2 {print $4}')
+
+Service Status:
+- Service Active: $(systemctl is-active claude-remote-client 2>/dev/null || echo "unknown")
+- Process Running: $(pgrep -f claude-remote-client >/dev/null 2>&1 && echo "yes" || echo "no")
+
+File Counts:
+- Session Files: $(find "$DATA_DIR/sessions" -name "*.json" -type f 2>/dev/null | wc -l)
+- Queue Files: $(find "$DATA_DIR/queues" -name "*.json" -type f 2>/dev/null | wc -l)
+- Log Files: $(find "$LOG_DIR" -name "*.log*" -type f 2>/dev/null | wc -l)
+
+Maintenance Actions Performed:
+- Log rotation: Completed
+- Session cleanup: Completed
+- Queue cleanup: Completed
+- Temporary file cleanup: Completed
+- Configuration validation: Completed
+- Health check: Completed
+
+EOF
+
+    log "Maintenance report saved: $report_file"
+    
+    # Keep only last 30 reports
+    find "$DATA_DIR" -name "maintenance-report-*.txt" -mtime +30 -type f -delete 2>/dev/null || true
+}
+
+# Main execution
+main() {
+    log "Starting maintenance tasks..."
+    
+    # Create directories if they don't exist
+    mkdir -p "$DATA_DIR" "$LOG_DIR" 2>/dev/null || true
+    
+    # Run maintenance tasks
+    check_user
+    rotate_logs
+    cleanup_sessions
+    cleanup_queues
+    cleanup_temp_files
+    check_disk_space
+    validate_config
+    check_service_health
+    generate_report
+    
+    log "All maintenance tasks completed successfully"
+}
+
+# Run main function
+main "$@"

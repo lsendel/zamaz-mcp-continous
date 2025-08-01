@@ -60,3 +60,17 @@ class CronScheduleError(ClaudeRemoteClientError):
     
     def __init__(self, message: str = "Cron schedule error", details: str = None):
         super().__init__(message, details)
+
+
+class QueueError(ClaudeRemoteClientError):
+    """Raised when queue operations fail."""
+    
+    def __init__(self, message: str = "Queue error", details: str = None):
+        super().__init__(message, details)
+
+
+class SlackError(ClaudeRemoteClientError):
+    """Raised when Slack operations fail."""
+    
+    def __init__(self, message: str = "Slack error", details: str = None):
+        super().__init__(message, details)

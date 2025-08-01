@@ -19,8 +19,13 @@ slack:
   # Can also be set via SLACK_SIGNING_SECRET environment variable
   signing_secret: "your-signing-secret-here"
 
-# Claude CLI configuration
+# Claude Handler configuration
 claude:
+  # Handler type: subprocess, mcp, or hybrid (default: subprocess)
+  # Can also be set via CLAUDE_HANDLER_TYPE environment variable
+  handler_type: "subprocess"
+  
+  # Subprocess handler settings
   # Path to Claude CLI executable (default: "claude")
   # Can also be set via CLAUDE_CLI_PATH environment variable
   cli_path: "claude"
@@ -32,6 +37,25 @@ claude:
   # Timeout for Claude CLI operations in seconds (default: 300)
   # Can also be set via CLAUDE_TIMEOUT environment variable
   timeout: 300
+  
+  # MCP handler settings (for mcp and hybrid modes)
+  # MCP server URI (default: mcp://localhost:8000)
+  # Can also be set via MCP_SERVER_URI environment variable
+  mcp_server_uri: "mcp://localhost:8000"
+  
+  # MCP protocol version (default: "1.0")
+  mcp_protocol_version: "1.0"
+  
+  # MCP connection timeout in seconds (default: 30)
+  # Can also be set via MCP_TIMEOUT environment variable
+  mcp_timeout: 30
+  
+  # Hybrid mode settings (when handler_type is "hybrid")
+  # Prefer MCP over subprocess when both are available (default: true)
+  prefer_mcp: true
+  
+  # Fall back to subprocess if MCP fails (default: true)
+  fallback_to_subprocess: true
 
 # Project configurations
 projects:

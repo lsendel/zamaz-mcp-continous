@@ -12,6 +12,8 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 import re
+import aiofiles
+import aiofiles.os
 
 from ..models import CronSchedule, QueuedTask, TaskStatus
 from ..config import Config
@@ -531,14 +533,15 @@ class CronScheduler:
         
         return results
     
-    def _load_schedules(self) -> None:
+    async def _load_schedules(self) -> None:
         """Load schedules from persistent storage."""
-        if not self.schedules_file.exists():
+        if not await aiofiles.os.path.exists(self.schedules_file):
             return
         
         try:
-            with open(self.schedules_file, 'r') as f:
-                data = json.load(f)
+            async with aiofiles.open(self.schedules_file, 'r') as f:
+                content = await f.read()
+                data = json.loads(content)
             
             for schedule_data in data.get('schedules', []):
                 schedule = CronSchedule(
@@ -567,7 +570,7 @@ class CronScheduler:
         except Exception as e:
             self.logger.error(f"Error loading schedules: {e}")
     
-    def _save_schedules(self) -> None:
+    async def _save_schedules(self) -> None:
         """Save schedules to persistent storage."""
         try:
             data = {
@@ -590,8 +593,8 @@ class CronScheduler:
                 }
                 data['schedules'].append(schedule_data)
             
-            with open(self.schedules_file, 'w') as f:
-                json.dump(data, f, indent=2)
+            async with aiofiles.open(self.schedules_file, 'w') as f:
+                await f.write(json.dumps(data, indent=2))
         
         except Exception as e:
             self.logger.error(f"Error saving schedules: {e}")

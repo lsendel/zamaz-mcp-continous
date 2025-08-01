@@ -181,8 +181,51 @@ def validate_project_path(path: str) -> bool:
     """
     
     try:
+        # Resolve path to prevent path traversal
         expanded_path = Path(path).expanduser().resolve()
-        return expanded_path.exists() and expanded_path.is_dir()
+        
+        # Ensure path exists and is a directory
+        if not expanded_path.exists() or not expanded_path.is_dir():
+            return False
+        
+        # Get user's home directory
+        home_path = Path.home()
+        
+        # Prevent access to sensitive system directories
+        sensitive_dirs = [
+            Path('/etc'),
+            Path('/sys'),
+            Path('/proc'),
+            Path('/boot'),
+            Path('/dev'),
+            Path('/root'),
+            Path('/var/log'),
+            Path('/usr/bin'),
+            Path('/usr/sbin'),
+            Path('/bin'),
+            Path('/sbin'),
+        ]
+        
+        # Check if path is trying to access sensitive directories
+        for sensitive_dir in sensitive_dirs:
+            try:
+                if expanded_path.is_relative_to(sensitive_dir):
+                    return False
+            except (ValueError, AttributeError):
+                # is_relative_to is Python 3.9+, fallback for older versions
+                try:
+                    expanded_path.relative_to(sensitive_dir)
+                    return False
+                except ValueError:
+                    pass
+        
+        # Additional check: ensure path doesn't contain suspicious patterns
+        path_str = str(expanded_path)
+        suspicious_patterns = ['..', '~root', '/private/etc', '/private/var']
+        if any(pattern in path_str for pattern in suspicious_patterns):
+            return False
+        
+        return True
     except Exception:
         return False
 

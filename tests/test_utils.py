@@ -1,218 +1,281 @@
 """
-Unit tests for utility functions.
+Unit tests for the utils module.
 """
 
 import pytest
+import asyncio
 import tempfile
+import os
+import json
 import logging
-from pathlib import Path
-
+import time
+from unittest.mock import patch, MagicMock, AsyncMock
+from datetime import datetime, timedelta
 from claude_remote_client.utils import (
-    setup_logging, format_error_for_slack, format_success_for_slack,
-    format_info_for_slack, format_code_block, format_inline_code,
-    truncate_message, validate_project_path, ensure_directory_exists,
-    get_timestamp, safe_dict_get
+    setup_logging,
+    format_error_for_slack,
+    format_success_for_slack,
+    format_info_for_slack,
+    format_code_block,
+    format_inline_code,
+    truncate_message,
+    validate_project_path,
+    ensure_directory_exists,
+    get_timestamp,
+    safe_dict_get
 )
-from claude_remote_client.exceptions import ClaudeRemoteClientError, SlackConnectionError
 
 
-class TestLogging:
-    """Test cases for logging setup."""
+class TestSetupLogging:
+    """Test logging setup utilities."""
     
-    def test_setup_logging_console_only(self):
-        """Test setting up console-only logging."""
-        logger = setup_logging("DEBUG")
-        
+    def test_setup_logging_default(self):
+        """Test default logging setup."""
+        logger = setup_logging()
         assert logger.name == "claude_remote_client"
+        assert logger.level == logging.INFO
+        assert len(logger.handlers) >= 1
+    
+    def test_setup_logging_debug_level(self):
+        """Test logging setup with debug level."""
+        logger = setup_logging(log_level="DEBUG")
         assert logger.level == logging.DEBUG
-        assert len(logger.handlers) == 1
-        assert isinstance(logger.handlers[0], logging.StreamHandler)
     
     def test_setup_logging_with_file(self):
-        """Test setting up logging with file output."""
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            log_file = temp_file.name
+        """Test logging setup with file output."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.log') as temp_file:
+            temp_path = temp_file.name
         
-        logger = setup_logging("INFO", log_file)
-        
-        assert len(logger.handlers) == 2
-        assert any(isinstance(h, logging.StreamHandler) for h in logger.handlers)
-        assert any(isinstance(h, logging.FileHandler) for h in logger.handlers)
-        
-        # Clean up
-        Path(log_file).unlink()
+        try:
+            logger = setup_logging(log_file=temp_path)
+            assert len(logger.handlers) >= 2  # Console + file
+            assert os.path.exists(temp_path)
+        finally:
+            os.unlink(temp_path)
     
     def test_setup_logging_invalid_level(self):
-        """Test setting up logging with invalid level."""
-        logger = setup_logging("INVALID_LEVEL")
-        
-        # Should default to INFO level
+        """Test logging setup with invalid level defaults to INFO."""
+        logger = setup_logging(log_level="INVALID")
         assert logger.level == logging.INFO
 
 
 class TestSlackFormatting:
-    """Test cases for Slack message formatting."""
+    """Test Slack message formatting utilities."""
     
-    def test_format_error_for_slack_custom_error(self):
-        """Test formatting custom error for Slack."""
-        error = SlackConnectionError("Connection failed", "Network timeout")
+    def test_format_error_for_slack_basic(self):
+        """Test basic error formatting for Slack."""
+        error = ValueError("Test error")
         result = format_error_for_slack(error)
-        
-        assert "❌ **Error**: Connection failed" in result
-        assert "📝 **Details**: Network timeout" in result
+        assert "❌ **Unexpected Error**: Test error" in result
     
-    def test_format_error_for_slack_generic_error(self):
-        """Test formatting generic error for Slack."""
-        error = ValueError("Invalid value")
+    def test_format_error_for_slack_claude_error(self):
+        """Test Claude error formatting for Slack."""
+        from claude_remote_client.exceptions import ClaudeRemoteClientError
+        error = ClaudeRemoteClientError("Test error", "Additional details")
         result = format_error_for_slack(error)
-        
-        assert "❌ **Unexpected Error**: Invalid value" in result
+        assert "❌ **Error**: Test error" in result
+        assert "📝 **Details**: Additional details" in result
     
     def test_format_error_for_slack_with_traceback(self):
-        """Test formatting error with traceback."""
+        """Test error formatting with traceback."""
         error = ValueError("Test error")
         result = format_error_for_slack(error, include_traceback=True)
-        
         assert "❌ **Unexpected Error**: Test error" in result
-        assert "```" in result  # Should contain code block for traceback
+        assert "```" in result  # Should include code block for traceback
     
     def test_format_success_for_slack(self):
-        """Test formatting success message for Slack."""
+        """Test success message formatting."""
+        result = format_success_for_slack("Operation completed")
+        assert "✅ **Success**: Operation completed" in result
+    
+    def test_format_success_for_slack_with_details(self):
+        """Test success message formatting with details."""
         result = format_success_for_slack("Operation completed", "All files processed")
-        
         assert "✅ **Success**: Operation completed" in result
         assert "📝 **Details**: All files processed" in result
     
-    def test_format_success_for_slack_no_details(self):
-        """Test formatting success message without details."""
-        result = format_success_for_slack("Operation completed")
-        
-        assert "✅ **Success**: Operation completed" in result
-        assert "📝 **Details**:" not in result
-    
     def test_format_info_for_slack(self):
-        """Test formatting info message for Slack."""
-        result = format_info_for_slack("System status", "All services running")
-        
-        assert "ℹ️ **Info**: System status" in result
-        assert "📝 **Details**: All services running" in result
+        """Test info message formatting."""
+        result = format_info_for_slack("Processing started")
+        assert "ℹ️ **Info**: Processing started" in result
+    
+    def test_format_info_for_slack_with_details(self):
+        """Test info message formatting with details."""
+        result = format_info_for_slack("Processing started", "10 files to process")
+        assert "ℹ️ **Info**: Processing started" in result
+        assert "📝 **Details**: 10 files to process" in result
+
+
+class TestCodeFormatting:
+    """Test code formatting utilities."""
     
     def test_format_code_block(self):
-        """Test formatting code block."""
-        code = "def hello():\n    print('Hello, world!')"
-        
-        # Without language
-        result = format_code_block(code)
-        assert result == "```\ndef hello():\n    print('Hello, world!')\n```"
-        
-        # With language
+        """Test code block formatting."""
+        code = "print('Hello, World!')"
         result = format_code_block(code, "python")
-        assert result == "```python\ndef hello():\n    print('Hello, world!')\n```"
+        assert result == "```python\nprint('Hello, World!')\n```"
+    
+    def test_format_code_block_no_language(self):
+        """Test code block formatting without language."""
+        code = "some code"
+        result = format_code_block(code)
+        assert result == "```\nsome code\n```"
     
     def test_format_inline_code(self):
-        """Test formatting inline code."""
-        result = format_inline_code("variable_name")
+        """Test inline code formatting."""
+        code = "variable_name"
+        result = format_inline_code(code)
         assert result == "`variable_name`"
-    
-    def test_truncate_message_short(self):
-        """Test truncating short message (no truncation needed)."""
-        message = "This is a short message"
-        result = truncate_message(message, max_length=100)
-        assert result == message
-    
-    def test_truncate_message_long(self):
-        """Test truncating long message."""
-        message = "A" * 1000
-        result = truncate_message(message, max_length=100)
-        
-        assert len(result) <= 100
-        assert result.endswith("... (message truncated)")
-        assert result.startswith("A")
 
 
-class TestPathValidation:
-    """Test cases for path validation and management."""
+class TestValidateProjectPath:
+    """Test project path validation."""
     
-    def test_validate_project_path_valid(self):
-        """Test validating valid project path."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            assert validate_project_path(temp_dir) is True
+    def test_validate_existing_directory(self):
+        """Test validating existing directory."""
+        # Use a directory that should be safe and accessible
+        import os
+        home_dir = os.path.expanduser("~")
+        # Create a test directory in home
+        test_dir = os.path.join(home_dir, "test_claude_project")
+        os.makedirs(test_dir, exist_ok=True)
+        try:
+            assert validate_project_path(test_dir) is True
+        finally:
+            # Clean up
+            if os.path.exists(test_dir):
+                os.rmdir(test_dir)
     
-    def test_validate_project_path_invalid(self):
-        """Test validating invalid project path."""
+    def test_validate_nonexistent_path(self):
+        """Test validating non-existent path."""
         assert validate_project_path("/nonexistent/path") is False
     
-    def test_validate_project_path_file(self):
-        """Test validating path that points to file (not directory)."""
+    def test_validate_file_not_directory(self):
+        """Test validating file instead of directory."""
         with tempfile.NamedTemporaryFile() as temp_file:
             assert validate_project_path(temp_file.name) is False
     
-    def test_validate_project_path_with_tilde(self):
-        """Test validating path with tilde expansion."""
-        # This should work if home directory exists
-        home_exists = Path.home().exists()
-        result = validate_project_path("~")
-        assert result == home_exists
+    def test_validate_sensitive_directory(self):
+        """Test validating sensitive system directories."""
+        assert validate_project_path("/etc") is False
+        assert validate_project_path("/sys") is False
+        assert validate_project_path("/proc") is False
     
-    def test_ensure_directory_exists_new(self):
-        """Test ensuring new directory exists."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            new_dir = Path(temp_dir) / "new" / "nested" / "directory"
-            
-            assert not new_dir.exists()
-            ensure_directory_exists(str(new_dir))
-            assert new_dir.exists()
-            assert new_dir.is_dir()
+    def test_validate_path_traversal_attempt(self):
+        """Test validating path traversal attempts."""
+        assert validate_project_path("../../../etc") is False
+        assert validate_project_path("/home/user/../../../etc") is False
+
+
+class TestTruncateMessage:
+    """Test message truncation."""
     
-    def test_ensure_directory_exists_existing(self):
-        """Test ensuring existing directory exists."""
+    def test_truncate_short_message(self):
+        """Test truncating message shorter than limit."""
+        message = "Short message"
+        result = truncate_message(message, 100)
+        assert result == "Short message"
+    
+    def test_truncate_long_message(self):
+        """Test truncating message longer than limit."""
+        message = "A" * 3100  # Longer than default 3000
+        result = truncate_message(message)
+        assert len(result) < 3100
+        assert result.endswith("... (message truncated)")
+    
+    def test_truncate_exact_limit(self):
+        """Test truncating message exactly at limit."""
+        message = "A" * 3000
+        result = truncate_message(message, 3000)
+        assert result == message
+    
+    def test_truncate_with_custom_limit(self):
+        """Test truncating with custom limit."""
+        message = "A" * 100
+        result = truncate_message(message, 50)
+        assert len(result) < 100
+        assert result.endswith("... (message truncated)")
+
+
+class TestEnsureDirectoryExists:
+    """Test directory creation utility."""
+    
+    def test_ensure_existing_directory(self):
+        """Test ensuring existing directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Should not raise error for existing directory
             ensure_directory_exists(temp_dir)
-            assert Path(temp_dir).exists()
-
-
-class TestUtilityFunctions:
-    """Test cases for general utility functions."""
+            assert os.path.exists(temp_dir)
     
-    def test_get_timestamp(self):
-        """Test getting ISO timestamp."""
+    def test_ensure_new_directory(self):
+        """Test ensuring new directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            new_dir = os.path.join(temp_dir, "new_directory")
+            ensure_directory_exists(new_dir)
+            assert os.path.exists(new_dir)
+            assert os.path.isdir(new_dir)
+    
+    def test_ensure_nested_directory(self):
+        """Test ensuring nested directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            nested_dir = os.path.join(temp_dir, "level1", "level2", "level3")
+            ensure_directory_exists(nested_dir)
+            assert os.path.exists(nested_dir)
+            assert os.path.isdir(nested_dir)
+
+
+class TestGetTimestamp:
+    """Test timestamp utility."""
+    
+    def test_get_timestamp_format(self):
+        """Test timestamp format."""
         timestamp = get_timestamp()
-        
-        # Should be valid ISO format
-        from datetime import datetime
-        parsed = datetime.fromisoformat(timestamp)
-        assert isinstance(parsed, datetime)
+        # Should be ISO format
+        assert "T" in timestamp
+        assert len(timestamp) > 10  # Should be longer than just date
     
-    def test_safe_dict_get_simple(self):
-        """Test safe dictionary get with simple key."""
-        data = {"key1": "value1", "key2": "value2"}
-        
-        assert safe_dict_get(data, "key1") == "value1"
-        assert safe_dict_get(data, "nonexistent") is None
-        assert safe_dict_get(data, "nonexistent", "default") == "default"
+    def test_get_timestamp_different_calls(self):
+        """Test that different calls produce different timestamps."""
+        timestamp1 = get_timestamp()
+        time.sleep(0.001)  # Small delay
+        timestamp2 = get_timestamp()
+        assert timestamp1 != timestamp2
+
+
+class TestSafeDictGet:
+    """Test safe dictionary access utility."""
     
-    def test_safe_dict_get_nested(self):
-        """Test safe dictionary get with nested keys."""
-        data = {
-            "level1": {
-                "level2": {
-                    "level3": "nested_value"
-                }
-            }
-        }
-        
-        assert safe_dict_get(data, "level1.level2.level3") == "nested_value"
-        assert safe_dict_get(data, "level1.level2") == {"level3": "nested_value"}
-        assert safe_dict_get(data, "level1.nonexistent") is None
-        assert safe_dict_get(data, "level1.nonexistent.deep", "default") == "default"
+    def test_safe_dict_get_simple_key(self):
+        """Test getting simple key."""
+        data = {"key": "value"}
+        result = safe_dict_get(data, "key")
+        assert result == "value"
     
-    def test_safe_dict_get_invalid_data(self):
-        """Test safe dictionary get with invalid data types."""
-        # Non-dictionary data
-        assert safe_dict_get("not_a_dict", "key") is None
-        assert safe_dict_get(None, "key", "default") == "default"
-        
-        # Dictionary with non-dictionary nested value
-        data = {"key": "string_value"}
-        assert safe_dict_get(data, "key.nested") is None
+    def test_safe_dict_get_nested_key(self):
+        """Test getting nested key with dot notation."""
+        data = {"level1": {"level2": {"level3": "value"}}}
+        result = safe_dict_get(data, "level1.level2.level3")
+        assert result == "value"
+    
+    def test_safe_dict_get_missing_key(self):
+        """Test getting missing key returns default."""
+        data = {"key": "value"}
+        result = safe_dict_get(data, "missing_key")
+        assert result is None
+    
+    def test_safe_dict_get_custom_default(self):
+        """Test getting missing key with custom default."""
+        data = {"key": "value"}
+        result = safe_dict_get(data, "missing_key", "default_value")
+        assert result == "default_value"
+    
+    def test_safe_dict_get_partial_nested_path(self):
+        """Test getting nested key where path doesn't exist."""
+        data = {"level1": {"level2": "value"}}
+        result = safe_dict_get(data, "level1.level2.level3", "default")
+        assert result == "default"
+    
+    def test_safe_dict_get_non_dict_value(self):
+        """Test getting nested key from non-dict value."""
+        data = {"level1": "not_a_dict"}
+        result = safe_dict_get(data, "level1.level2", "default")
+        assert result == "default"

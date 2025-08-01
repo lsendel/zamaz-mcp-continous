@@ -1,0 +1,406 @@
+"""
+Property-based tests for data models and validation.
+"""
+
+import pytest
+import string
+from hypothesis import given, strategies as st, assume
+from datetime import datetime, timedelta
+from claude_remote_client.models import (
+    ClaudeSession,
+    QueuedTask,
+    CronSchedule,
+    SlackMessage,
+    TaskStatus,
+    MessageType
+)
+from claude_remote_client.utils import (
+    validate_project_path,
+    truncate_message,
+    safe_dict_get
+)
+
+
+class TestClaudeSessionProperties:
+    """Property-based tests for ClaudeSession."""
+    
+    @given(
+        session_id=st.text(min_size=1, max_size=64, alphabet=string.ascii_letters + string.digits + '-_'),
+        project_path=st.text(min_size=1, max_size=255),
+        project_name=st.text(min_size=1, max_size=100)
+    )
+    def test_session_creation_properties(self, session_id, project_path, project_name):
+        """Test that session creation maintains invariants."""
+        session = ClaudeSession(
+            session_id=session_id,
+            project_path=project_path,
+            project_name=project_name
+        )
+        
+        assert session.session_id == session_id
+        assert session.project_path == project_path
+        assert session.project_name == project_name
+        assert isinstance(session.created_at, datetime)
+        assert isinstance(session.last_activity, datetime)
+        assert session.conversation_history == []
+        assert session.is_active is True
+    
+    @given(
+        session_id=st.text(min_size=1, max_size=64, alphabet=string.ascii_letters + string.digits + '-_'),
+        project_path=st.text(min_size=1, max_size=255)
+    )
+    def test_session_auto_project_name(self, session_id, project_path):
+        """Test that project name is auto-generated from path."""
+        session = ClaudeSession(
+            session_id=session_id,
+            project_path=project_path
+        )
+        
+        # Project name should be derived from path
+        assert session.project_name is not None
+        assert len(session.project_name) > 0
+    
+    @given(
+        content=st.text(min_size=1, max_size=1000),
+        role=st.sampled_from(['user', 'assistant', 'system'])
+    )
+    def test_add_message_properties(self, content, role):
+        """Test adding messages maintains conversation history."""
+        session = ClaudeSession(
+            session_id="test-session",
+            project_path="/test/path"
+        )
+        
+        initial_count = len(session.conversation_history)
+        session.add_message(content, role)
+        
+        assert len(session.conversation_history) == initial_count + 1
+        message = session.conversation_history[-1]
+        assert message['content'] == content
+        assert message['role'] == role
+        assert 'timestamp' in message
+
+
+class TestQueuedTaskProperties:
+    """Property-based tests for QueuedTask."""
+    
+    @given(
+        task_id=st.text(min_size=1, max_size=64, alphabet=string.ascii_letters + string.digits + '-_'),
+        description=st.text(min_size=1, max_size=500),
+        project_path=st.text(min_size=1, max_size=255),
+        priority=st.integers(min_value=1, max_value=10)
+    )
+    def test_task_creation_properties(self, task_id, description, project_path, priority):
+        """Test that task creation maintains invariants."""
+        task = QueuedTask(
+            task_id=task_id,
+            description=description,
+            project_path=project_path,
+            priority=priority
+        )
+        
+        assert task.task_id == task_id
+        assert task.description == description
+        assert task.project_path == project_path
+        assert task.priority == priority
+        assert task.status == TaskStatus.PENDING
+        assert isinstance(task.created_at, datetime)
+        assert task.started_at is None
+        assert task.completed_at is None
+        assert task.error_message is None
+        assert task.retry_count == 0
+    
+    @given(
+        task_id=st.text(min_size=1, max_size=64, alphabet=string.ascii_letters + string.digits + '-_'),
+        description=st.text(min_size=1, max_size=500),
+        project_path=st.text(min_size=1, max_size=255)
+    )
+    def test_task_execution_lifecycle(self, task_id, description, project_path):
+        """Test task execution lifecycle maintains state consistency."""
+        task = QueuedTask(
+            task_id=task_id,
+            description=description,
+            project_path=project_path
+        )
+        
+        # Start execution
+        task.start_execution()
+        assert task.status == TaskStatus.RUNNING
+        assert task.started_at is not None
+        assert task.completed_at is None
+        
+        # Complete execution
+        task.complete_execution("Success result")
+        assert task.status == TaskStatus.COMPLETED
+        assert task.completed_at is not None
+        assert task.result == "Success result"
+        assert task.error_message is None
+    
+    @given(
+        task_id=st.text(min_size=1, max_size=64, alphabet=string.ascii_letters + string.digits + '-_'),
+        description=st.text(min_size=1, max_size=500),
+        project_path=st.text(min_size=1, max_size=255),
+        error_message=st.text(min_size=1, max_size=200)
+    )
+    def test_task_failure_properties(self, task_id, description, project_path, error_message):
+        """Test task failure maintains error state."""
+        task = QueuedTask(
+            task_id=task_id,
+            description=description,
+            project_path=project_path
+        )
+        
+        task.start_execution()
+        task.fail_execution(error_message)
+        
+        assert task.status == TaskStatus.FAILED
+        assert task.error_message == error_message
+        assert task.completed_at is not None
+        assert task.result is None
+
+
+class TestSlackMessageProperties:
+    """Property-based tests for SlackMessage."""
+    
+    @given(
+        text=st.text(min_size=1, max_size=3000),
+        user=st.text(min_size=1, max_size=50, alphabet=string.ascii_letters + string.digits),
+        channel=st.text(min_size=1, max_size=50, alphabet=string.ascii_letters + string.digits),
+        timestamp=st.text(min_size=1, max_size=20, alphabet=string.digits + '.')
+    )
+    def test_message_creation_properties(self, text, user, channel, timestamp):
+        """Test that message creation maintains invariants."""
+        message = SlackMessage(
+            text=text,
+            user=user,
+            channel=channel,
+            timestamp=timestamp
+        )
+        
+        assert message.text == text
+        assert message.user == user
+        assert message.channel == channel
+        assert message.timestamp == timestamp
+        assert message.thread_ts is None
+        assert message.message_type == MessageType.USER_MESSAGE
+    
+    @given(
+        text=st.text(min_size=3, max_size=100).filter(lambda x: x.startswith('@@'))
+    )
+    def test_command_detection_properties(self, text):
+        """Test command detection for messages starting with @@."""
+        message = SlackMessage(
+            text=text,
+            user="test_user",
+            channel="test_channel",
+            timestamp="123456789.123"
+        )
+        
+        assert message.is_command() is True
+        command = message.get_command()
+        assert command is not None
+        assert len(command) > 0
+    
+    @given(
+        text=st.text(min_size=1, max_size=100).filter(lambda x: not x.startswith('@@'))
+    )
+    def test_non_command_detection_properties(self, text):
+        """Test that non-command messages are not detected as commands."""
+        message = SlackMessage(
+            text=text,
+            user="test_user",
+            channel="test_channel",
+            timestamp="123456789.123"
+        )
+        
+        assert message.is_command() is False
+        assert message.get_command() is None
+
+
+class TestUtilityFunctionProperties:
+    """Property-based tests for utility functions."""
+    
+    @given(
+        message=st.text(min_size=0, max_size=10000),
+        max_length=st.integers(min_value=10, max_value=5000)
+    )
+    def test_truncate_message_properties(self, message, max_length):
+        """Test that message truncation maintains length constraints."""
+        result = truncate_message(message, max_length)
+        
+        # Result should never exceed max_length + truncation suffix length
+        assert len(result) <= max_length + 50  # Account for truncation suffix
+        
+        # If original message was within limit, should be unchanged
+        if len(message) <= max_length:
+            assert result == message
+        else:
+            # Should be truncated and have truncation indicator
+            assert len(result) < len(message)
+            assert "... (message truncated)" in result
+    
+    @given(
+        data=st.dictionaries(
+            keys=st.text(min_size=1, max_size=20, alphabet=string.ascii_letters),
+            values=st.one_of(
+                st.text(min_size=0, max_size=100),
+                st.integers(),
+                st.floats(allow_nan=False, allow_infinity=False),
+                st.booleans()
+            ),
+            min_size=1,
+            max_size=10
+        ),
+        key=st.text(min_size=1, max_size=20, alphabet=string.ascii_letters),
+        default_value=st.one_of(st.text(), st.integers(), st.none())
+    )
+    def test_safe_dict_get_properties(self, data, key, default_value):
+        """Test safe dictionary access properties."""
+        result = safe_dict_get(data, key, default_value)
+        
+        if key in data:
+            assert result == data[key]
+        else:
+            assert result == default_value
+    
+    @given(
+        data=st.dictionaries(
+            keys=st.text(min_size=1, max_size=10, alphabet=string.ascii_letters),
+            values=st.dictionaries(
+                keys=st.text(min_size=1, max_size=10, alphabet=string.ascii_letters),
+                values=st.text(min_size=0, max_size=50),
+                min_size=1,
+                max_size=5
+            ),
+            min_size=1,
+            max_size=5
+        )
+    )
+    def test_safe_dict_get_nested_properties(self, data):
+        """Test safe dictionary access with nested keys."""
+        # Test accessing existing nested keys
+        for level1_key, level2_dict in data.items():
+            for level2_key, value in level2_dict.items():
+                nested_key = f"{level1_key}.{level2_key}"
+                result = safe_dict_get(data, nested_key)
+                assert result == value
+        
+        # Test accessing non-existent nested keys
+        non_existent_key = "nonexistent.key"
+        result = safe_dict_get(data, non_existent_key, "default")
+        assert result == "default"
+
+
+class TestCronScheduleProperties:
+    """Property-based tests for CronSchedule."""
+    
+    @given(
+        pattern=st.sampled_from([
+            "0 * * * *",      # Every hour
+            "0 0 * * *",      # Daily at midnight
+            "0 0 * * 0",      # Weekly on Sunday
+            "0 0 1 * *",      # Monthly on 1st
+            "*/15 * * * *"    # Every 15 minutes
+        ]),
+        tasks=st.lists(
+            st.text(min_size=1, max_size=50, alphabet=string.ascii_letters + '_'),
+            min_size=1,
+            max_size=5
+        ),
+        project_path=st.text(min_size=1, max_size=255)
+    )
+    def test_cron_schedule_creation_properties(self, pattern, tasks, project_path):
+        """Test cron schedule creation maintains invariants."""
+        schedule = CronSchedule(
+            pattern=pattern,
+            tasks=tasks,
+            project_path=project_path
+        )
+        
+        assert schedule.pattern == pattern
+        assert schedule.tasks == tasks
+        assert schedule.project_path == project_path
+        assert schedule.last_run is None
+        assert schedule.next_run is None
+        assert schedule.enabled is True
+    
+    @given(
+        pattern=st.sampled_from([
+            "0 * * * *",      # Every hour
+            "0 0 * * *",      # Daily at midnight
+            "*/30 * * * *"    # Every 30 minutes
+        ]),
+        tasks=st.lists(
+            st.text(min_size=1, max_size=50, alphabet=string.ascii_letters + '_'),
+            min_size=1,
+            max_size=3
+        ),
+        project_path=st.text(min_size=1, max_size=255)
+    )
+    def test_cron_schedule_next_run_calculation(self, pattern, tasks, project_path):
+        """Test that next run calculation is consistent."""
+        schedule = CronSchedule(
+            pattern=pattern,
+            tasks=tasks,
+            project_path=project_path
+        )
+        
+        # Calculate next run multiple times
+        next_run1 = schedule.calculate_next_run()
+        next_run2 = schedule.calculate_next_run()
+        
+        # Should be consistent
+        if next_run1 is not None and next_run2 is not None:
+            # Allow small time differences due to execution time
+            time_diff = abs((next_run1 - next_run2).total_seconds())
+            assert time_diff < 1.0  # Less than 1 second difference
+
+
+class TestDataModelInvariants:
+    """Test invariants across all data models."""
+    
+    @given(
+        session_id=st.text(min_size=1, max_size=64, alphabet=string.ascii_letters + string.digits + '-_'),
+        project_path=st.text(min_size=1, max_size=255)
+    )
+    def test_session_to_dict_roundtrip(self, session_id, project_path):
+        """Test that session serialization maintains data integrity."""
+        original_session = ClaudeSession(
+            session_id=session_id,
+            project_path=project_path
+        )
+        
+        # Convert to dict and back
+        session_dict = original_session.to_dict()
+        
+        # Verify essential fields are preserved
+        assert session_dict['session_id'] == session_id
+        assert session_dict['project_path'] == project_path
+        assert 'created_at' in session_dict
+        assert 'last_activity' in session_dict
+        assert 'conversation_history' in session_dict
+        assert 'is_active' in session_dict
+    
+    @given(
+        task_id=st.text(min_size=1, max_size=64, alphabet=string.ascii_letters + string.digits + '-_'),
+        description=st.text(min_size=1, max_size=500),
+        project_path=st.text(min_size=1, max_size=255)
+    )
+    def test_task_to_dict_roundtrip(self, task_id, description, project_path):
+        """Test that task serialization maintains data integrity."""
+        original_task = QueuedTask(
+            task_id=task_id,
+            description=description,
+            project_path=project_path
+        )
+        
+        # Convert to dict
+        task_dict = original_task.to_dict()
+        
+        # Verify essential fields are preserved
+        assert task_dict['task_id'] == task_id
+        assert task_dict['description'] == description
+        assert task_dict['project_path'] == project_path
+        assert 'status' in task_dict
+        assert 'created_at' in task_dict
+        assert 'priority' in task_dict

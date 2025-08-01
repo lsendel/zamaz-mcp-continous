@@ -1,24 +1,86 @@
-# Compiled class file
-*.class
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
-# Log file
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Application specific
 *.log
+claude-remote-client.yaml
+.claude-remote-client/
+*.db
+*.sqlite3
 
-# BlueJ files
-*.ctxt
+# Environment and secrets
+.env
+.env.*
+*.env
+!.env.example
+secrets/
+*.key
+*.pem
+*.cert
+*.crt
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
+# Configuration files with potential secrets
+config.yaml
+config.yml
+settings.yaml
+settings.yml
+!*.example.yaml
+!*.example.yml
 
-# Package Files #
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
+# Documentation
+docs/_build/
+site/
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+# Temporary files
+*.tmp
+*.bak
+.temp/
+
+# OS files
+Thumbs.db
+.DS_Store

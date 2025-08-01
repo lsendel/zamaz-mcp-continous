@@ -1,0 +1,111 @@
+# Claude Remote Client Configuration - MCP Evolution Example
+# This configuration demonstrates the MCP evolution capabilities
+
+# Slack Configuration
+slack:
+  bot_token: xoxb-your-bot-token-here
+  app_token: xapp-your-app-token-here  # Optional, for Socket Mode
+  channel_id: C1234567890
+  signing_secret: your-signing-secret-here
+
+# Claude Handler Configuration
+claude:
+  # Handler Type Selection
+  # Options: subprocess, mcp, hybrid
+  handler_type: hybrid  # Recommended for maximum reliability
+  
+  # Subprocess Handler Configuration (for subprocess and hybrid modes)
+  cli_path: claude
+  default_args:
+    - --dangerously-skip-permissions
+  timeout: 300  # Command timeout in seconds
+  
+  # MCP Handler Configuration (for mcp and hybrid modes)
+  mcp_server_uri: mcp://localhost:8000
+  mcp_protocol_version: "1.0"
+  mcp_timeout: 30  # Connection timeout in seconds
+  
+  # Hybrid Mode Configuration
+  prefer_mcp: true  # Prefer MCP over subprocess when both are available
+  fallback_to_subprocess: true  # Fall back to subprocess if MCP fails
+  
+  # Advanced MCP Configuration (optional)
+  mcp_connection_pool:
+    min_connections: 1
+    max_connections: 5
+    idle_timeout: 300
+  
+  # Handler-specific settings
+  retry_attempts: 3
+  retry_delay: 1.0  # seconds
+  health_check_interval: 60  # seconds
+
+# Project Configuration
+projects:
+  - name: example-web-app
+    path: ~/projects/web-app
+    description: React web application
+  
+  - name: api-service
+    path: ~/projects/api
+    description: Python FastAPI service
+  
+  - name: mobile-app
+    path: ~/projects/mobile
+    description: React Native mobile app
+
+# Application Configuration
+log_level: INFO
+data_dir: ~/.claude-remote-client
+max_sessions: 10
+task_queue_size: 100
+
+# Health Check Configuration
+health_check:
+  enabled: true
+  port: 8080
+  endpoint: /health
+  
+# Monitoring Configuration
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  collect_handler_metrics: true
+  collect_session_metrics: true
+  
+# Migration Settings
+migration:
+  # Automatic migration settings
+  auto_migrate_to_mcp: false  # Set to true to automatically migrate when MCP becomes available
+  migration_check_interval: 3600  # Check for MCP availability every hour
+  
+  # Rollback settings
+  enable_rollback: true
+  rollback_on_failure_count: 3  # Roll back after 3 consecutive failures
+  rollback_cooldown: 300  # Wait 5 minutes before trying MCP again after rollback
+
+# Advanced Configuration
+advanced:
+  # Handler switching
+  handler_switch_cooldown: 60  # Minimum time between handler switches
+  max_switch_attempts: 5  # Maximum switches per hour
+  
+  # Performance tuning
+  context_window_buffer: 1000  # Reserve tokens for system messages
+  batch_size: 10  # For batch processing operations
+  
+  # Security
+  validate_mcp_certificates: true
+  mcp_auth_token: ${MCP_AUTH_TOKEN}  # Use environment variable
+  
+  # Debugging
+  debug_handler_switching: false
+  log_handler_performance: true
+  save_handler_metrics: true
+
+# Environment-specific overrides
+# These can be overridden with environment variables:
+# CLAUDE_HANDLER_TYPE=mcp
+# MCP_SERVER_URI=mcp://production-server:8000
+# SLACK_BOT_TOKEN=xoxb-production-token
+# LOG_LEVEL=DEBUG

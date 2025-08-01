@@ -1,0 +1,153 @@
+# Prometheus alert rules for Claude Remote Client
+
+groups:
+  - name: claude-remote-client.rules
+    rules:
+      # Application availability
+      - alert: ClaudeRemoteClientDown
+        expr: up{job="claude-remote-client"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: claude-remote-client
+        annotations:
+          summary: "Claude Remote Client is down"
+          description: "Claude Remote Client has been down for more than 1 minute."
+          runbook_url: "https://github.com/your-org/claude-remote-client/blob/main/docs/TROUBLESHOOTING.md#bot-not-responding"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: (process_resident_memory_bytes{job="claude-remote-client"} / 1024 / 1024) > 400
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-remote-client
+        annotations:
+          summary: "High memory usage detected"
+          description: "Claude Remote Client is using {{ $value }}MB of memory, which is above the 400MB threshold."
+          runbook_url: "https://github.com/your-org/claude-remote-client/blob/main/docs/TROUBLESHOOTING.md#high-memory-usage"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="claude-remote-client"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-remote-client
+        annotations:
+          summary: "High CPU usage detected"
+          description: "Claude Remote Client is using {{ $value }}% CPU, which is above the 80% threshold."
+
+      # Too many active sessions
+      - alert: TooManyActiveSessions
+        expr: claude_active_sessions{job="claude-remote-client"} > 8
+        for: 2m
+        labels:
+          severity: warning
+          service: claude-remote-client
+        annotations:
+          summary: "Too many active Claude sessions"
+          description: "There are {{ $value }} active Claude sessions, which may impact performance."
+
+      # Queue processing delays
+      - alert: QueueProcessingDelay
+        expr: claude_queue_processing_duration_seconds{job="claude-remote-client"} > 300
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-remote-client
+        annotations:
+          summary: "Queue processing is taking too long"
+          description: "Queue processing is taking {{ $value }} seconds, which is above the 5-minute threshold."
+
+      # Slack API errors
+      - alert: SlackAPIErrors
+        expr: rate(claude_slack_api_errors_total{job="claude-remote-client"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: claude-remote-client
+        annotations:
+          summary: "High rate of Slack API errors"
+          description: "Slack API error rate is {{ $value }} errors per second."
+          runbook_url: "https://github.com/your-org/claude-remote-client/blob/main/docs/TROUBLESHOOTING.md#slack-connection-issues"
+
+      # Claude CLI errors
+      - alert: ClaudeCLIErrors
+        expr: rate(claude_cli_errors_total{job="claude-remote-client"}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          service: claude-remote-client
+        annotations:
+          summary: "High rate of Claude CLI errors"
+          description: "Claude CLI error rate is {{ $value }} errors per second."
+          runbook_url: "https://github.com/your-org/claude-remote-client/blob/main/docs/TROUBLESHOOTING.md#claude-cli-issues"
+
+      # Disk space usage
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/app/data"} / node_filesystem_size_bytes{mountpoint="/app/data"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+          service: claude-remote-client
+        annotations:
+          summary: "Low disk space on data directory"
+          description: "Data directory has less than 10% free space remaining."
+
+      # Redis connectivity (if using Redis)
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute. This may affect session management."
+
+      # Container restart frequency
+      - alert: FrequentRestarts
+        expr: rate(container_start_time_seconds{name="claude-remote-client"}[1h]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-remote-client
+        annotations:
+          summary: "Container restarting frequently"
+          description: "Claude Remote Client container is restarting more than once per hour."
+
+  - name: system.rules
+    rules:
+      # System load
+      - alert: HighSystemLoad
+        expr: node_load1 > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High system load"
+          description: "System load is {{ $value }}, which is above the threshold of 2."
+
+      # System memory usage
+      - alert: HighSystemMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High system memory usage"
+          description: "System memory usage is {{ $value }}%, which is above the 85% threshold."
+
+      # Disk I/O wait
+      - alert: HighIOWait
+        expr: rate(node_cpu_seconds_total{mode="iowait"}[5m]) * 100 > 20
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High I/O wait time"
+          description: "I/O wait time is {{ $value }}%, which indicates potential disk performance issues."

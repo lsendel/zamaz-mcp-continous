@@ -14,6 +14,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 
 from .exceptions import ConfigurationError
+from .yaml_env_loader import load_yaml_with_env
 
 
 @dataclass
@@ -31,6 +32,18 @@ class ClaudeConfig:
     cli_path: str = "claude"
     default_args: List[str] = field(default_factory=lambda: ["--dangerously-skip-permissions"])
     timeout: int = 300  # 5 minutes default timeout
+    
+    # Handler configuration
+    handler_type: str = "subprocess"  # "subprocess", "mcp", or "hybrid"
+    
+    # MCP-specific configuration
+    mcp_server_uri: str = "mcp://localhost:8000"
+    mcp_protocol_version: str = "1.0"
+    mcp_timeout: int = 30
+    
+    # Hybrid mode configuration
+    prefer_mcp: bool = True  # In hybrid mode, prefer MCP over subprocess
+    fallback_to_subprocess: bool = True  # Fall back to subprocess if MCP fails
 
 
 @dataclass
@@ -76,11 +89,38 @@ class Config:
             errors.append("Slack channel ID must start with 'C'")
         
         # Validate Claude configuration
-        if not self.claude.cli_path:
-            errors.append("Claude CLI path is required")
+        if not self.claude.cli_path and self.claude.handler_type in ["subprocess", "hybrid"]:
+            errors.append("Claude CLI path is required for subprocess and hybrid modes")
         
         if self.claude.timeout <= 0:
             errors.append("Claude timeout must be positive")
+        
+        # Validate handler type
+        valid_handler_types = {"subprocess", "mcp", "hybrid"}
+        if self.claude.handler_type not in valid_handler_types:
+            errors.append(f"handler_type must be one of: {', '.join(valid_handler_types)}")
+        
+        # Validate MCP configuration if using MCP
+        if self.claude.handler_type in ["mcp", "hybrid"]:
+            if not self.claude.mcp_server_uri:
+                errors.append("MCP server URI is required for MCP and hybrid modes")
+            elif not self._validate_mcp_uri(self.claude.mcp_server_uri):
+                errors.append(f"Invalid MCP server URI format: {self.claude.mcp_server_uri}")
+            
+            if self.claude.mcp_timeout <= 0:
+                errors.append("MCP timeout must be positive")
+            
+            if not self.claude.mcp_protocol_version:
+                errors.append("MCP protocol version is required for MCP and hybrid modes")
+        
+        # Validate hybrid-specific configuration
+        if self.claude.handler_type == "hybrid":
+            # Ensure at least one handler can be used
+            has_subprocess = bool(self.claude.cli_path)
+            has_mcp = bool(self.claude.mcp_server_uri)
+            
+            if not has_subprocess and not has_mcp:
+                errors.append("Hybrid mode requires either Claude CLI or MCP server configuration")
         
         # Validate projects
         project_names = set()
@@ -117,6 +157,42 @@ class Config:
         
         if errors:
             raise ConfigurationError("Configuration validation failed", "; ".join(errors))
+    
+    def _validate_mcp_uri(self, uri: str) -> bool:
+        """
+        Validate MCP server URI format.
+        
+        Args:
+            uri: URI to validate
+        
+        Returns:
+            bool: True if URI is valid, False otherwise
+        """
+        if not uri:
+            return False
+        
+        # Basic URI validation for MCP protocol
+        valid_schemes = ['mcp', 'mcps', 'ws', 'wss', 'http', 'https']
+        
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(uri)
+            
+            # Check scheme
+            if parsed.scheme not in valid_schemes:
+                return False
+            
+            # Check hostname
+            if not parsed.hostname:
+                return False
+            
+            # Check port (if specified)
+            if parsed.port is not None and (parsed.port < 1 or parsed.port > 65535):
+                return False
+            
+            return True
+        except Exception:
+            return False
     
     def get_project_by_name(self, name: str) -> Optional[ProjectConfig]:
         """Get project configuration by name."""
@@ -172,6 +248,154 @@ class Config:
             raise ConfigurationError(
                 f"Failed to validate Claude CLI at '{self.claude.cli_path}': {str(e)}"
             )
+    
+    def validate_mcp_server(self) -> bool:
+        """
+        Validate that MCP server is accessible.
+        
+        Returns:
+            bool: True if MCP server is accessible.
+        
+        Raises:
+            ConfigurationError: If MCP server is not accessible.
+        """
+        if not self.claude.mcp_server_uri:
+            raise ConfigurationError("MCP server URI is not configured")
+        
+        try:
+            from urllib.parse import urlparse
+            import socket
+            
+            parsed = urlparse(self.claude.mcp_server_uri)
+            
+            if not parsed.hostname:
+                raise ConfigurationError(f"Invalid MCP server URI: {self.claude.mcp_server_uri}")
+            
+            port = parsed.port or 8000  # Default MCP port
+            
+            # Test connection
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.claude.mcp_timeout)
+            
+            try:
+                result = sock.connect_ex((parsed.hostname, port))
+                if result != 0:
+                    raise ConfigurationError(
+                        f"Cannot connect to MCP server at {parsed.hostname}:{port}. "
+                        "Please ensure the MCP server is running and accessible."
+                    )
+                return True
+            finally:
+                sock.close()
+                
+        except Exception as e:
+            if isinstance(e, ConfigurationError):
+                raise
+            raise ConfigurationError(f"Failed to validate MCP server: {str(e)}")
+    
+    def get_handler_validation_status(self) -> Dict[str, Any]:
+        """
+        Get validation status for all configured handlers.
+        
+        Returns:
+            Dict containing validation status for each handler type
+        """
+        status = {
+            'subprocess': {'available': False, 'error': None},
+            'mcp': {'available': False, 'error': None},
+            'hybrid': {'available': False, 'error': None}
+        }
+        
+        # Test subprocess handler
+        if self.claude.handler_type in ['subprocess', 'hybrid']:
+            try:
+                self.validate_claude_cli()
+                status['subprocess']['available'] = True
+            except ConfigurationError as e:
+                status['subprocess']['error'] = str(e)
+        
+        # Test MCP handler
+        if self.claude.handler_type in ['mcp', 'hybrid']:
+            try:
+                self.validate_mcp_server()
+                status['mcp']['available'] = True
+            except ConfigurationError as e:
+                status['mcp']['error'] = str(e)
+        
+        # Hybrid is available if at least one handler is available
+        if self.claude.handler_type == 'hybrid':
+            status['hybrid']['available'] = (
+                status['subprocess']['available'] or 
+                status['mcp']['available']
+            )
+            if not status['hybrid']['available']:
+                status['hybrid']['error'] = (
+                    "Neither subprocess nor MCP handler is available"
+                )
+        
+        return status
+    
+    def recommend_handler_type(self) -> Dict[str, Any]:
+        """
+        Recommend the best handler type based on current configuration and environment.
+        
+        Returns:
+            Dict containing recommendation information
+        """
+        validation_status = self.get_handler_validation_status()
+        
+        recommendation = {
+            'recommended': None,
+            'reason': '',
+            'alternatives': [],
+            'warnings': []
+        }
+        
+        # Determine best option
+        if validation_status['hybrid']['available']:
+            recommendation['recommended'] = 'hybrid'
+            recommendation['reason'] = (
+                'Hybrid mode provides maximum reliability with automatic fallback'
+            )
+            
+            # Add alternatives
+            if validation_status['mcp']['available']:
+                recommendation['alternatives'].append({
+                    'type': 'mcp',
+                    'reason': 'MCP-only for maximum performance when stable'
+                })
+            
+            if validation_status['subprocess']['available']:
+                recommendation['alternatives'].append({
+                    'type': 'subprocess',
+                    'reason': 'Subprocess-only for maximum compatibility'
+                })
+        
+        elif validation_status['mcp']['available']:
+            recommendation['recommended'] = 'mcp'
+            recommendation['reason'] = 'MCP provides enhanced capabilities and performance'
+            
+            if not validation_status['subprocess']['available']:
+                recommendation['warnings'].append(
+                    'No fallback available - consider installing Claude CLI for backup'
+                )
+        
+        elif validation_status['subprocess']['available']:
+            recommendation['recommended'] = 'subprocess'
+            recommendation['reason'] = 'Subprocess is the most reliable option available'
+            
+            recommendation['warnings'].append(
+                'Consider setting up MCP server for enhanced capabilities'
+            )
+        
+        else:
+            recommendation['recommended'] = None
+            recommendation['reason'] = 'No handlers are currently available'
+            recommendation['warnings'].append(
+                'Please install Claude CLI or set up MCP server'
+            )
+        
+        return recommendation
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -208,8 +432,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # Load from YAML file if it exists
     if config_path and os.path.exists(config_path):
         try:
-            with open(config_path, 'r') as f:
-                yaml_data = yaml.safe_load(f)
+            # Use custom loader that expands environment variables
+            yaml_data = load_yaml_with_env(config_path)
             
             if yaml_data:
                 config = _merge_config_data(config, yaml_data)
@@ -238,6 +462,8 @@ def _merge_config_data(config: Config, data: Dict[str, Any]) -> Config:
             config.slack.app_token = slack_data['app_token']
         if 'channel_id' in slack_data:
             config.slack.channel_id = slack_data['channel_id']
+        if 'default_channel' in slack_data:
+            config.slack.channel_id = slack_data['default_channel']
         if 'signing_secret' in slack_data:
             config.slack.signing_secret = slack_data['signing_secret']
     
@@ -250,6 +476,18 @@ def _merge_config_data(config: Config, data: Dict[str, Any]) -> Config:
             config.claude.default_args = claude_data['default_args']
         if 'timeout' in claude_data:
             config.claude.timeout = claude_data['timeout']
+        if 'handler_type' in claude_data:
+            config.claude.handler_type = claude_data['handler_type']
+        if 'mcp_server_uri' in claude_data:
+            config.claude.mcp_server_uri = claude_data['mcp_server_uri']
+        if 'mcp_protocol_version' in claude_data:
+            config.claude.mcp_protocol_version = claude_data['mcp_protocol_version']
+        if 'mcp_timeout' in claude_data:
+            config.claude.mcp_timeout = claude_data['mcp_timeout']
+        if 'prefer_mcp' in claude_data:
+            config.claude.prefer_mcp = claude_data['prefer_mcp']
+        if 'fallback_to_subprocess' in claude_data:
+            config.claude.fallback_to_subprocess = claude_data['fallback_to_subprocess']
     
     # Projects configuration
     if 'projects' in data:
@@ -307,6 +545,21 @@ def _load_env_overrides(config: Config) -> Config:
         except ValueError:
             pass
     
+    claude_handler_type = os.getenv('CLAUDE_HANDLER_TYPE')
+    if claude_handler_type:
+        config.claude.handler_type = claude_handler_type
+    
+    mcp_server_uri = os.getenv('MCP_SERVER_URI')
+    if mcp_server_uri:
+        config.claude.mcp_server_uri = mcp_server_uri
+    
+    mcp_timeout = os.getenv('MCP_TIMEOUT')
+    if mcp_timeout:
+        try:
+            config.claude.mcp_timeout = int(mcp_timeout)
+        except ValueError:
+            pass
+    
     # General environment variables
     log_level = os.getenv('LOG_LEVEL')
     if log_level:
@@ -345,7 +598,13 @@ def create_default_config_file(path: str) -> None:
         'claude': {
             'cli_path': 'claude',
             'default_args': ['--dangerously-skip-permissions'],
-            'timeout': 300
+            'timeout': 300,
+            'handler_type': 'subprocess',  # Options: subprocess, mcp, hybrid
+            'mcp_server_uri': 'mcp://localhost:8000',
+            'mcp_protocol_version': '1.0',
+            'mcp_timeout': 30,
+            'prefer_mcp': True,
+            'fallback_to_subprocess': True
         },
         'projects': [
             {

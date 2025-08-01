@@ -11,6 +11,8 @@ import time
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 import json
+import aiofiles
+import aiofiles.os
 
 from ..models import ClaudeSession
 from ..config import Config, ProjectConfig
@@ -110,7 +112,7 @@ class ProjectManager:
         """
         return validate_project_path(path)
     
-    def discover_projects_in_directory(self, base_dir: str, max_depth: int = 2) -> List[ProjectConfig]:
+    async def discover_projects_in_directory(self, base_dir: str, max_depth: int = 2) -> List[ProjectConfig]:
         """
         Discover projects in a directory by looking for common project indicators.
         
@@ -123,49 +125,43 @@ class ProjectManager:
         """
         discovered_projects = []
         
-        if not os.path.exists(base_dir) or not os.path.isdir(base_dir):
+        if not await aiofiles.os.path.exists(base_dir) or not await aiofiles.os.path.isdir(base_dir):
             self.logger.warning(f"Base directory does not exist: {base_dir}")
             return discovered_projects
         
-        try:
-            base_path = Path(base_dir).resolve()
-            
-            for root, dirs, files in os.walk(base_path):
-                current_depth = len(Path(root).relative_to(base_path).parts)
-                
-                # Limit search depth
-                if current_depth > max_depth:
-                    dirs.clear()  # Don't recurse deeper
-                    continue
-                
-                # Check for project indicators
-                if self._is_project_directory(root, files):
-                    project_name = Path(root).name
-                    project_path = str(Path(root).resolve())
-                    
-                    # Skip if already in configured projects
-                    if not self.get_project_by_path(project_path):
-                        project = ProjectConfig(
-                            name=project_name,
-                            path=project_path,
-                            description=f"Auto-discovered project in {project_path}"
-                        )
-                        discovered_projects.append(project)
-                        
-                        self.logger.info(f"Discovered project: {project_name} at {project_path}")
-        
-        except Exception as e:
-            self.logger.error(f"Error discovering projects in {base_dir}: {e}")
-        
+        async def _walk(path, depth):
+            if depth > max_depth:
+                return
+
+            try:
+                async for entry in aiofiles.os.scandir(path):
+                    if entry.is_dir():
+                        if await self._is_project_directory(entry.path):
+                            project_name = Path(entry.path).name
+                            project_path = str(Path(entry.path).resolve())
+
+                            if not self.get_project_by_path(project_path):
+                                project = ProjectConfig(
+                                    name=project_name,
+                                    path=project_path,
+                                    description=f"Auto-discovered project in {project_path}"
+                                )
+                                discovered_projects.append(project)
+                                self.logger.info(f"Discovered project: {project_name} at {project_path}")
+                        else:
+                            await _walk(entry.path, depth + 1)
+            except OSError as e:
+                self.logger.error(f"Error scanning directory {path}: {e}")
+
+        await _walk(base_dir, 0)
         return discovered_projects
     
-    def _is_project_directory(self, directory: str, files: List[str]) -> bool:
+    async def _is_project_directory(self, directory: str) -> bool:
         """
         Check if a directory appears to be a project directory.
         
         Args:
             directory: Directory path to check
-            files: List of files in the directory
         
         Returns:
             bool: True if directory appears to be a project
@@ -194,15 +190,12 @@ class ProjectManager:
             '.git',
         ]
         
-        # Check for files
-        for indicator in project_indicators:
-            if indicator in files:
-                return True
-        
-        # Check for directories (like .git)
-        for indicator in project_indicators:
-            if os.path.isdir(os.path.join(directory, indicator)):
-                return True
+        try:
+            async for entry in aiofiles.os.scandir(directory):
+                if entry.name in project_indicators:
+                    return True
+        except OSError:
+            return False
         
         return False
     
@@ -487,14 +480,15 @@ class ProjectManager:
         import time
         return (time.time() - self._cache_timestamp) > self.cache_ttl
     
-    def _load_project_metadata(self) -> None:
+    async def _load_project_metadata(self) -> None:
         """Load project metadata from file."""
-        if not self.projects_metadata_file.exists():
+        if not await aiofiles.os.path.exists(self.projects_metadata_file):
             return
         
         try:
-            with open(self.projects_metadata_file, 'r') as f:
-                metadata = json.load(f)
+            async with aiofiles.open(self.projects_metadata_file, 'r') as f:
+                content = await f.read()
+                metadata = json.loads(content)
             
             for project_data in metadata.get('projects', []):
                 project = ProjectConfig(
@@ -505,13 +499,13 @@ class ProjectManager:
                 
                 # Only add if path is still valid and not already in cache
                 if (project.name not in self._project_cache and 
-                    self.validate_project_path(project.path)):
+                    await self.validate_project_path(project.path)):
                     self._project_cache[project.name] = project
         
         except Exception as e:
             self.logger.error(f"Error loading project metadata: {e}")
     
-    def _save_project_metadata(self) -> None:
+    async def _save_project_metadata(self) -> None:
         """Save project metadata to file."""
         try:
             # Only save projects that are not in main config
@@ -532,10 +526,10 @@ class ProjectManager:
             }
             
             # Ensure directory exists
-            ensure_directory_exists(str(self.projects_metadata_file.parent))
+            await aiofiles.os.makedirs(self.projects_metadata_file.parent, exist_ok=True)
             
-            with open(self.projects_metadata_file, 'w') as f:
-                json.dump(metadata, f, indent=2)
+            async with aiofiles.open(self.projects_metadata_file, 'w') as f:
+                await f.write(json.dumps(metadata, indent=2))
         
         except Exception as e:
             self.logger.error(f"Error saving project metadata: {e}")

@@ -1,0 +1,452 @@
+"""
+Unit tests for the handler interface module.
+"""
+
+import pytest
+import asyncio
+from unittest.mock import MagicMock, AsyncMock, patch
+from claude_remote_client.claude_client.handler_interface import (
+    ClaudeHandlerInterface,
+    HandlerCapabilities,
+    HandlerStatus,
+    MessageType,
+    ClaudeMessage,
+    ClaudeResponse
+)
+from claude_remote_client.exceptions import ClaudeProcessError
+
+
+class TestHandlerCapabilities:
+    """Test the HandlerCapabilities class."""
+    
+    def test_default_capabilities(self):
+        """Test default capabilities."""
+        caps = HandlerCapabilities()
+        assert caps.supports_streaming is True
+        assert caps.supports_file_operations is True
+        assert caps.supports_interactive_prompts is True
+        assert caps.supports_slash_commands is True
+        assert caps.max_message_length == 32768
+        assert caps.supports_session_persistence is False
+    
+    def test_custom_capabilities(self):
+        """Test custom capabilities."""
+        caps = HandlerCapabilities(
+            supports_streaming=False,
+            supports_file_operations=False,
+            max_message_length=1024,
+            supports_session_persistence=True
+        )
+        assert caps.supports_streaming is False
+        assert caps.supports_file_operations is False
+        assert caps.max_message_length == 1024
+        assert caps.supports_session_persistence is True
+
+
+class TestHandlerStatus:
+    """Test the HandlerStatus enum."""
+    
+    def test_status_values(self):
+        """Test status enum values."""
+        assert HandlerStatus.IDLE.value == "idle"
+        assert HandlerStatus.STARTING.value == "starting"
+        assert HandlerStatus.RUNNING.value == "running"
+        assert HandlerStatus.PROCESSING.value == "processing"
+        assert HandlerStatus.ERROR.value == "error"
+        assert HandlerStatus.TERMINATED.value == "terminated"
+
+
+class TestMessageType:
+    """Test the MessageType enum."""
+    
+    def test_message_type_values(self):
+        """Test message type enum values."""
+        assert MessageType.USER_MESSAGE.value == "user_message"
+        assert MessageType.SLASH_COMMAND.value == "slash_command"
+        assert MessageType.SYSTEM_COMMAND.value == "system_command"
+        assert MessageType.FILE_OPERATION.value == "file_operation"
+
+
+class TestClaudeMessage:
+    """Test the ClaudeMessage class."""
+    
+    def test_message_creation(self):
+        """Test creating a Claude message."""
+        message = ClaudeMessage(
+            content="Hello Claude",
+            message_type=MessageType.USER_MESSAGE,
+            session_id="test-session"
+        )
+        assert message.content == "Hello Claude"
+        assert message.message_type == MessageType.USER_MESSAGE
+        assert message.session_id == "test-session"
+        assert message.metadata == {}
+        assert message.timestamp is not None
+    
+    def test_message_with_metadata(self):
+        """Test creating message with metadata."""
+        metadata = {"project": "test-project", "user": "test-user"}
+        message = ClaudeMessage(
+            content="/help",
+            message_type=MessageType.SLASH_COMMAND,
+            session_id="test-session",
+            metadata=metadata
+        )
+        assert message.metadata == metadata
+    
+    def test_message_to_dict(self):
+        """Test converting message to dictionary."""
+        message = ClaudeMessage(
+            content="Test message",
+            message_type=MessageType.USER_MESSAGE,
+            session_id="test-session"
+        )
+        result = message.to_dict()
+        
+        assert result["content"] == "Test message"
+        assert result["message_type"] == "user_message"
+        assert result["session_id"] == "test-session"
+        assert "timestamp" in result
+        assert result["metadata"] == {}
+    
+    def test_message_from_dict(self):
+        """Test creating message from dictionary."""
+        data = {
+            "content": "Test message",
+            "message_type": "user_message",
+            "session_id": "test-session",
+            "metadata": {"key": "value"}
+        }
+        message = ClaudeMessage.from_dict(data)
+        
+        assert message.content == "Test message"
+        assert message.message_type == MessageType.USER_MESSAGE
+        assert message.session_id == "test-session"
+        assert message.metadata == {"key": "value"}
+
+
+class TestClaudeResponse:
+    """Test the ClaudeResponse class."""
+    
+    def test_response_creation(self):
+        """Test creating a Claude response."""
+        response = ClaudeResponse(
+            content="Hello user",
+            session_id="test-session",
+            is_complete=True
+        )
+        assert response.content == "Hello user"
+        assert response.session_id == "test-session"
+        assert response.is_complete is True
+        assert response.error is None
+        assert response.metadata == {}
+    
+    def test_response_with_error(self):
+        """Test creating response with error."""
+        response = ClaudeResponse(
+            content="",
+            session_id="test-session",
+            is_complete=True,
+            error="Process failed"
+        )
+        assert response.error == "Process failed"
+        assert response.is_complete is True
+    
+    def test_response_streaming(self):
+        """Test creating streaming response."""
+        response = ClaudeResponse(
+            content="Partial response",
+            session_id="test-session",
+            is_complete=False
+        )
+        assert response.is_complete is False
+    
+    def test_response_to_dict(self):
+        """Test converting response to dictionary."""
+        response = ClaudeResponse(
+            content="Test response",
+            session_id="test-session",
+            is_complete=True,
+            metadata={"tokens": 100}
+        )
+        result = response.to_dict()
+        
+        assert result["content"] == "Test response"
+        assert result["session_id"] == "test-session"
+        assert result["is_complete"] is True
+        assert result["metadata"] == {"tokens": 100}
+        assert "timestamp" in result
+
+
+class MockClaudeHandler(ClaudeHandlerInterface):
+    """Mock implementation of ClaudeHandlerInterface for testing."""
+    
+    def __init__(self):
+        super().__init__()
+        self._status = HandlerStatus.IDLE
+        self._capabilities = HandlerCapabilities()
+        self.started = False
+        self.terminated = False
+        self.messages_sent = []
+    
+    async def start_session(self, project_path: str, session_id: str) -> None:
+        """Start a mock session."""
+        self._status = HandlerStatus.STARTING
+        await asyncio.sleep(0.01)  # Simulate startup time
+        self._status = HandlerStatus.RUNNING
+        self.started = True
+    
+    async def send_message(self, message: ClaudeMessage) -> AsyncMock:
+        """Send a mock message."""
+        self._status = HandlerStatus.PROCESSING
+        self.messages_sent.append(message)
+        
+        # Simulate streaming response
+        async def mock_response_stream():
+            yield ClaudeResponse(
+                content="Partial response",
+                session_id=message.session_id,
+                is_complete=False
+            )
+            await asyncio.sleep(0.01)
+            yield ClaudeResponse(
+                content="Complete response",
+                session_id=message.session_id,
+                is_complete=True
+            )
+        
+        self._status = HandlerStatus.RUNNING
+        return mock_response_stream()
+    
+    async def terminate_session(self) -> None:
+        """Terminate mock session."""
+        self._status = HandlerStatus.TERMINATED
+        self.terminated = True
+    
+    def get_status(self) -> HandlerStatus:
+        """Get mock status."""
+        return self._status
+    
+    def get_capabilities(self) -> HandlerCapabilities:
+        """Get mock capabilities."""
+        return self._capabilities
+
+
+class TestClaudeHandlerInterface:
+    """Test the ClaudeHandlerInterface abstract base class."""
+    
+    def test_interface_cannot_be_instantiated(self):
+        """Test that the interface cannot be instantiated directly."""
+        with pytest.raises(TypeError):
+            ClaudeHandlerInterface()
+    
+    @pytest.mark.asyncio
+    async def test_mock_handler_start_session(self):
+        """Test starting a session with mock handler."""
+        handler = MockClaudeHandler()
+        assert handler.get_status() == HandlerStatus.IDLE
+        
+        await handler.start_session("/test/project", "test-session")
+        
+        assert handler.started is True
+        assert handler.get_status() == HandlerStatus.RUNNING
+    
+    @pytest.mark.asyncio
+    async def test_mock_handler_send_message(self):
+        """Test sending message with mock handler."""
+        handler = MockClaudeHandler()
+        await handler.start_session("/test/project", "test-session")
+        
+        message = ClaudeMessage(
+            content="Test message",
+            message_type=MessageType.USER_MESSAGE,
+            session_id="test-session"
+        )
+        
+        response_stream = await handler.send_message(message)
+        responses = []
+        async for response in response_stream:
+            responses.append(response)
+        
+        assert len(responses) == 2
+        assert responses[0].is_complete is False
+        assert responses[1].is_complete is True
+        assert len(handler.messages_sent) == 1
+        assert handler.messages_sent[0].content == "Test message"
+    
+    @pytest.mark.asyncio
+    async def test_mock_handler_terminate_session(self):
+        """Test terminating session with mock handler."""
+        handler = MockClaudeHandler()
+        await handler.start_session("/test/project", "test-session")
+        
+        await handler.terminate_session()
+        
+        assert handler.terminated is True
+        assert handler.get_status() == HandlerStatus.TERMINATED
+    
+    def test_mock_handler_capabilities(self):
+        """Test getting handler capabilities."""
+        handler = MockClaudeHandler()
+        capabilities = handler.get_capabilities()
+        
+        assert isinstance(capabilities, HandlerCapabilities)
+        assert capabilities.supports_streaming is True
+        assert capabilities.supports_file_operations is True
+    
+    @pytest.mark.asyncio
+    async def test_handler_status_transitions(self):
+        """Test handler status transitions."""
+        handler = MockClaudeHandler()
+        
+        # Initial state
+        assert handler.get_status() == HandlerStatus.IDLE
+        
+        # Start session
+        start_task = asyncio.create_task(handler.start_session("/test", "session"))
+        await asyncio.sleep(0.005)  # Let it start
+        assert handler.get_status() == HandlerStatus.STARTING
+        
+        await start_task
+        assert handler.get_status() == HandlerStatus.RUNNING
+        
+        # Send message
+        message = ClaudeMessage("test", MessageType.USER_MESSAGE, "session")
+        response_stream = await handler.send_message(message)
+        
+        # Status should be processing during message handling
+        # (Note: In real implementation, this would be more complex)
+        
+        # Consume the stream
+        async for _ in response_stream:
+            pass
+        
+        assert handler.get_status() == HandlerStatus.RUNNING
+        
+        # Terminate
+        await handler.terminate_session()
+        assert handler.get_status() == HandlerStatus.TERMINATED
+    
+    @pytest.mark.asyncio
+    async def test_multiple_messages(self):
+        """Test sending multiple messages."""
+        handler = MockClaudeHandler()
+        await handler.start_session("/test/project", "test-session")
+        
+        messages = [
+            ClaudeMessage("Message 1", MessageType.USER_MESSAGE, "test-session"),
+            ClaudeMessage("/help", MessageType.SLASH_COMMAND, "test-session"),
+            ClaudeMessage("Message 2", MessageType.USER_MESSAGE, "test-session")
+        ]
+        
+        for message in messages:
+            response_stream = await handler.send_message(message)
+            # Consume the stream
+            async for _ in response_stream:
+                pass
+        
+        assert len(handler.messages_sent) == 3
+        assert handler.messages_sent[0].content == "Message 1"
+        assert handler.messages_sent[1].content == "/help"
+        assert handler.messages_sent[1].message_type == MessageType.SLASH_COMMAND
+        assert handler.messages_sent[2].content == "Message 2"
+    
+    @pytest.mark.asyncio
+    async def test_message_with_metadata(self):
+        """Test sending message with metadata."""
+        handler = MockClaudeHandler()
+        await handler.start_session("/test/project", "test-session")
+        
+        metadata = {
+            "project": "test-project",
+            "user": "test-user",
+            "priority": "high"
+        }
+        
+        message = ClaudeMessage(
+            content="Important message",
+            message_type=MessageType.USER_MESSAGE,
+            session_id="test-session",
+            metadata=metadata
+        )
+        
+        response_stream = await handler.send_message(message)
+        async for _ in response_stream:
+            pass
+        
+        sent_message = handler.messages_sent[0]
+        assert sent_message.metadata == metadata
+        assert sent_message.metadata["project"] == "test-project"
+        assert sent_message.metadata["priority"] == "high"
+
+
+class TestHandlerInterfaceValidation:
+    """Test validation and error handling in handler interface."""
+    
+    def test_message_validation(self):
+        """Test message validation."""
+        # Valid message
+        message = ClaudeMessage(
+            content="Valid message",
+            message_type=MessageType.USER_MESSAGE,
+            session_id="valid-session"
+        )
+        assert message.content == "Valid message"
+        
+        # Test with empty content (should be allowed)
+        message = ClaudeMessage(
+            content="",
+            message_type=MessageType.SLASH_COMMAND,
+            session_id="session"
+        )
+        assert message.content == ""
+    
+    def test_response_validation(self):
+        """Test response validation."""
+        # Valid complete response
+        response = ClaudeResponse(
+            content="Response content",
+            session_id="session",
+            is_complete=True
+        )
+        assert response.is_complete is True
+        assert response.error is None
+        
+        # Valid streaming response
+        response = ClaudeResponse(
+            content="Partial content",
+            session_id="session",
+            is_complete=False
+        )
+        assert response.is_complete is False
+        
+        # Response with error
+        response = ClaudeResponse(
+            content="",
+            session_id="session",
+            is_complete=True,
+            error="Something went wrong"
+        )
+        assert response.error == "Something went wrong"
+    
+    def test_capabilities_validation(self):
+        """Test capabilities validation."""
+        # Test with negative max_message_length
+        caps = HandlerCapabilities(max_message_length=-1)
+        assert caps.max_message_length == -1  # Should allow negative (unlimited)
+        
+        # Test with zero max_message_length
+        caps = HandlerCapabilities(max_message_length=0)
+        assert caps.max_message_length == 0
+        
+        # Test boolean capabilities
+        caps = HandlerCapabilities(
+            supports_streaming=False,
+            supports_file_operations=False,
+            supports_interactive_prompts=False,
+            supports_slash_commands=False
+        )
+        assert caps.supports_streaming is False
+        assert caps.supports_file_operations is False
+        assert caps.supports_interactive_prompts is False
+        assert caps.supports_slash_commands is False

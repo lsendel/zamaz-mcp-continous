@@ -26,7 +26,7 @@
     - Write unit tests for command parsing and routing logic
     - _Requirements: 1.1, 1.2, 2.2_
 
-- [ ] 3. Build Claude CLI subprocess integration
+- [x] 3. Build Claude CLI subprocess integration
 
   - [x] 3.1 Create Claude subprocess manager
 
@@ -79,7 +79,7 @@
 
 - [x] 6. Add configuration and setup
 
-  - [ ] 6.1 Create configuration management
+  - [x] 6.1 Create configuration management
 
     - Build YAML configuration file with Slack token and project paths
     - Add environment variable support for sensitive data
@@ -87,16 +87,16 @@
     - Write unit tests for configuration loading and validation
     - _Requirements: 5.1, 5.2, 5.4_
 
-  - [x] 6.2 Add setup and installation
+  - [-] 6.2 Add setup and installation
     - Create setup.py with dependencies and entry points
     - Build CLI command for starting the bot
     - Add initial setup wizard for first-time configuration
     - Write integration tests for complete setup process
     - _Requirements: 4.5, 5.5_
 
-- [ ] 7. Build error handling and logging
+- [x] 7. Build error handling and logging
 
-  - [ ] 7.1 Implement basic error handling
+  - [x] 7.1 Implement basic error handling
 
     - Create error categories for Slack, Claude, and session errors
     - Add automatic retry logic with exponential backoff
@@ -104,16 +104,16 @@
     - Write unit tests for error handling scenarios
     - _Requirements: 2.4, 2.5, 2.6_
 
-  - [ ] 7.2 Add logging and monitoring
+  - [x] 7.2 Add logging and monitoring
     - Implement structured logging with different levels
     - Add basic health checks and status reporting
     - Create simple metrics collection for debugging
     - Write tests for logging output and health checks
     - _Requirements: 4.1, 4.2_
 
-- [ ] 8. Create comprehensive test suite
+- [x] 8. Create comprehensive test suite
 
-  - [ ] 8.1 Build unit test coverage
+  - [x] 8.1 Build unit test coverage
 
     - Write unit tests for all core components with mocking
     - Add property-based tests for data models and validation
@@ -121,16 +121,16 @@
     - Achieve 90%+ code coverage with meaningful tests
     - _Requirements: 4.5_
 
-  - [ ] 8.2 Add integration and end-to-end tests
+  - [x] 8.2 Add integration and end-to-end tests
     - Create integration tests with real Slack and Claude CLI
     - Build end-to-end workflow tests for complete user journeys
     - Add performance tests for basic load and concurrency
     - Create deployment tests for package installation
     - _Requirements: 4.5_
 
-- [ ] 9. Package and document for release
+- [x] 9. Package and document for release
 
-  - [ ] 9.1 Create installable package
+  - [x] 9.1 Create installable package
 
     - Build proper Python package with setup.py and requirements
     - Create CLI entry point and command-line interface
@@ -138,15 +138,15 @@
     - Write user documentation with examples and troubleshooting
     - _Requirements: 4.5, 5.5_
 
-  - [ ] 9.2 Prepare for deployment
+  - [x] 9.2 Prepare for deployment
     - Create Docker container for easy deployment
     - Add systemd service file for background operation
     - Build basic monitoring and health check endpoints
     - Create deployment guide and operational documentation
     - _Requirements: 5.5_
 
-- [ ] 10. Future evolution preparation
-  - [ ] 10.1 Design for MCP evolution
+- [x] 10. Future evolution preparation
+  - [x] 10.1 Design for MCP evolution
     - Create abstract interface for Claude communication
     - Build plugin architecture for easy Claude handler switching
     - Design configuration support for subprocess vs MCP modes
