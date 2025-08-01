@@ -1,0 +1,83 @@
+name: Dependency Check
+
+on:
+  push:
+    paths:
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+  schedule:
+    # Run every Monday at 3 AM UTC
+    - cron: '0 3 * * 1'
+
+jobs:
+  security:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety pip-audit
+    
+    - name: Check for security vulnerabilities with Safety
+      run: |
+        pip install -r requirements.txt
+        safety check --json --output safety-report.json
+      continue-on-error: true
+    
+    - name: Check for vulnerabilities with pip-audit
+      run: |
+        pip-audit --requirement requirements.txt --format json --output pip-audit-report.json
+      continue-on-error: true
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          safety-report.json
+          pip-audit-report.json
+  
+  licenses:
+    name: License Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install pip-licenses
+      run: |
+        python -m pip install --upgrade pip
+        pip install pip-licenses
+    
+    - name: Check licenses
+      run: |
+        pip install -r requirements.txt
+        pip-licenses --with-system --with-urls --format=json --output-file=licenses.json
+        
+        # Check for problematic licenses
+        pip-licenses --fail-on="GPL;LGPL;AGPL;Commercial" || echo "Found potentially problematic licenses"
+    
+    - name: Upload license report
+      uses: actions/upload-artifact@v4
+      with:
+        name: license-report
+        path: licenses.json

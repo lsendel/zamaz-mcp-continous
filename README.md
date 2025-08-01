@@ -1,8 +1,11 @@
 # Claude Remote Client
 
+[![CI](https://github.com/lsendel/zamaz-mcp-continous/actions/workflows/ci.yml/badge.svg)](https://github.com/lsendel/zamaz-mcp-continous/actions/workflows/ci.yml)
+[![Code Quality](https://github.com/lsendel/zamaz-mcp-continous/actions/workflows/quality.yml/badge.svg)](https://github.com/lsendel/zamaz-mcp-continous/actions/workflows/quality.yml)
+[![codecov](https://codecov.io/gh/lsendel/zamaz-mcp-continous/branch/main/graph/badge.svg)](https://codecov.io/gh/lsendel/zamaz-mcp-continous)
 [![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Development Status](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/your-org/claude-remote-client)
+[![Development Status](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/lsendel/zamaz-mcp-continous)
 
 A powerful Python application that enables remote Claude AI interaction through Slack with intelligent project management, session handling, and task automation. Transform your development workflow by accessing Claude's full capabilities from anywhere through your Slack workspace.
 

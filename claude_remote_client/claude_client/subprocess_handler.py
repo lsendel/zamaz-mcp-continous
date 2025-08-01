@@ -74,6 +74,9 @@ class SubprocessClaudeHandler(ClaudeHandlerInterface):
         self.claude_session_id: Optional[str] = None  # Claude Code's internal session ID
         self.is_interactive = True  # Whether to use interactive mode
         
+        # Background tasks tracking
+        self.background_tasks = []
+        
         # Handler capabilities
         self.capabilities = HandlerCapabilities(
             streaming=True,
@@ -156,9 +159,11 @@ class SubprocessClaudeHandler(ClaudeHandlerInterface):
             self.logger.info(f"Claude process started successfully (PID: {self.process.pid})")
             
             # Start background tasks for output handling
-            asyncio.create_task(self._handle_stdout())
-            asyncio.create_task(self._handle_stderr())
-            asyncio.create_task(self._monitor_process())
+            self.background_tasks = [
+                asyncio.create_task(self._handle_stdout()),
+                asyncio.create_task(self._handle_stderr()),
+                asyncio.create_task(self._monitor_process())
+            ]
         
         except Exception as e:
             session.status = SessionStatus.ERROR
@@ -344,7 +349,12 @@ class SubprocessClaudeHandler(ClaudeHandlerInterface):
                         
                         # Parse JSON output if in JSON mode
                         if self.output_format in ["json", "stream-json"]:
-                            self._parse_json_output(decoded_output)
+                            try:
+                                self._parse_json_output(decoded_output)
+                            except json.JSONDecodeError as e:
+                                self.logger.warning(f"Failed to parse JSON output: {e}")
+                            except Exception as e:
+                                self.logger.error(f"Error parsing output: {e}")
                         
                         # Notify output handlers
                         for handler in self.output_handlers:
@@ -473,6 +483,16 @@ class SubprocessClaudeHandler(ClaudeHandlerInterface):
             self.is_running = False
             if self.session:
                 self.session.status = SessionStatus.STOPPING
+            
+            # Cancel background tasks
+            for task in self.background_tasks:
+                if not task.done():
+                    task.cancel()
+            
+            # Wait for tasks to complete
+            if self.background_tasks:
+                await asyncio.gather(*self.background_tasks, return_exceptions=True)
+            self.background_tasks.clear()
             
             # Try graceful termination first
             if self.process.returncode is None:

@@ -2,7 +2,7 @@
 <project version="4">
   <component name="SonarLintProjectSettings">
     <option name="bindingEnabled" value="true" />
-    <option name="projectKey" value="lsendel_sub-agents" />
+    <option name="projectKey" value="lsendel_zamaz-mcp-continous" />
     <option name="serverId" value="sonar_zamaz-debate" />
   </component>
 </project>

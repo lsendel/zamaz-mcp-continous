@@ -469,7 +469,13 @@ class SessionManager:
 
                 # Wait for any session to time out, or for 60 seconds
                 if timeout_tasks:
-                    await asyncio.wait(timeout_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=60)
+                    done, pending = await asyncio.wait(timeout_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=60)
+                    # Cancel remaining tasks
+                    for task in pending:
+                        task.cancel()
+                    # Wait for cancellation to complete
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
                 else:
                     await asyncio.sleep(60)
 
