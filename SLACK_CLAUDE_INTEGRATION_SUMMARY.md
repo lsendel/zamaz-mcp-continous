@@ -45,10 +45,10 @@ User sees Claude's response
 ## 🔧 Current Configuration
 
 ```env
-SLACK_BOT_TOKEN=xoxb-2930443898-9288910136628-VXUIINKF9pkFUNjXWJdiePrM
-SLACK_CHANNEL=C098WUY87L1
-CLAUDE_CLI_PATH=/Users/lsendel/.npm-global/bin/claude
-PROJECT_PATH=/Users/lsendel/IdeaProjects/zamaz-mcp-continous
+SLACK_BOT_TOKEN=xoxb-XXXX-XXXX-XXXXXXXXXXXX
+SLACK_CHANNEL=CXXXXXXXXXX
+CLAUDE_CLI_PATH=/path/to/claude
+PROJECT_PATH=/path/to/project
 ```
 
 ## ⚠️ Limitation

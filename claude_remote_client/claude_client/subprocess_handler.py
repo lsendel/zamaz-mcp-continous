@@ -6,10 +6,10 @@ stdin/stdout communication, and process lifecycle management.
 """
 
 import asyncio
-import logging
 import os
-import signal
-from typing import Optional, AsyncIterator, Dict, Any, List
+import shlex
+import re
+from typing import Optional, AsyncIterator, Dict, Any
 from datetime import datetime
 from pathlib import Path
 import json
@@ -193,10 +193,29 @@ class SubprocessClaudeHandler(ClaudeHandlerInterface):
             if not command or not isinstance(command, str):
                 raise ClaudeProcessError("Invalid command: must be a non-empty string")
             
-            # Sanitize command to prevent injection
+            # Sanitize command to prevent injection - use strict validation
             command = command.strip()
-            if any(char in command for char in ['&', '|', ';', '`', '$', '(', ')', '<', '>', '\n', '\r']):
-                raise ClaudeProcessError("Invalid command: contains potentially dangerous characters")
+            
+            # More comprehensive dangerous character detection
+            dangerous_patterns = [
+                r'[&|;`$()<>\n\r]',  # Shell metacharacters
+                r'\\x[0-9a-fA-F]{2}',  # Hex escapes
+                r'\\[0-7]{1,3}',  # Octal escapes
+                r'\$\{.*\}',  # Variable expansion
+                r'\$\(.*\)',  # Command substitution
+            ]
+            
+            for pattern in dangerous_patterns:
+                if re.search(pattern, command):
+                    raise ClaudeProcessError(f"Invalid command: contains potentially dangerous pattern: {pattern}")
+            
+            # Additional validation: ensure command doesn't start with certain characters
+            if command.startswith(('-', '/', '\\')):
+                raise ClaudeProcessError("Invalid command: cannot start with -, /, or \\")
+            
+            # Use shlex to properly quote the command if needed
+            # This helps prevent argument injection
+            command = shlex.quote(command) if ' ' in command else command
             
             # Build command for non-interactive mode
             cmd_args = [self.config.cli_path, "-p", command]

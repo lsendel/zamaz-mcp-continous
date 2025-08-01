@@ -74,3 +74,10 @@ class SlackError(ClaudeRemoteClientError):
     
     def __init__(self, message: str = "Slack error", details: str = None):
         super().__init__(message, details)
+
+
+class SlackSecurityError(SlackError):
+    """Raised when Slack security validation fails."""
+    
+    def __init__(self, message: str = "Slack security error", details: str = None):
+        super().__init__(message, details)

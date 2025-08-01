@@ -8,9 +8,12 @@ message handling, and command processing.
 from .client import SlackBotClient
 from .message_handler import MessageHandler
 from .command_router import CommandRouter
+from .security import SlackRequestValidator, verify_slack_signature
 
 __all__ = [
     "SlackBotClient",
     "MessageHandler", 
-    "CommandRouter"
+    "CommandRouter",
+    "SlackRequestValidator",
+    "verify_slack_signature"
 ]

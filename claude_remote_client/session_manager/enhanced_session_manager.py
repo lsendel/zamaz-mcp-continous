@@ -338,7 +338,7 @@ class EnhancedSessionManager(SessionManager):
         """Create a cache key for response caching."""
         import hashlib
         content = f"{session_id}:{message}"
-        return hashlib.md5(content.encode()).hexdigest()
+        return hashlib.sha256(content.encode()).hexdigest()
     
     async def _cache_cleanup_loop(self) -> None:
         """Background task for cache cleanup."""

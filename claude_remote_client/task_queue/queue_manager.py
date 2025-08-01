@@ -19,6 +19,7 @@ from ..models import QueuedTask, TaskStatus
 from ..config import Config
 from ..exceptions import TaskQueueError
 from ..utils import setup_logging, ensure_directory_exists
+from ..resource_limits import with_task_limit, get_resource_limiter
 
 
 class QueueManager:
@@ -48,6 +49,9 @@ class QueueManager:
         
         # Execution settings
         self.max_concurrent_tasks = 3
+        
+        # Get resource limiter
+        self.resource_limiter = get_resource_limiter()
         self.task_timeout = 1800  # 30 minutes
         
         # Background execution
@@ -151,6 +155,11 @@ class QueueManager:
             # Check queue size limit
             if len(self.queues[queue_name]) >= self.config.task_queue_size:
                 raise TaskQueueError(f"Queue '{queue_name}' is full (max {self.config.task_queue_size} tasks)")
+            
+            # Check resource limits
+            if not self.resource_limiter.check_queue_limit():
+                raise TaskQueueError("Global queue limit reached")
+            self.resource_limiter.increment_queue()
             
             # Add task to queue (sorted by priority)
             self.queues[queue_name].append(task)
@@ -349,6 +358,7 @@ class QueueManager:
         
         return None  
   
+    @with_task_limit
     async def _execute_task(self, task: QueuedTask) -> Dict[str, Any]:
         """
         Execute a single task.

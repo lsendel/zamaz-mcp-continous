@@ -18,6 +18,13 @@ from .exceptions import (
     SessionError,
     ConfigurationError
 )
+from .resource_limits import (
+    ResourceLimiter,
+    get_resource_limiter,
+    set_resource_limits,
+    with_task_limit,
+    with_session_limit
+)
 
 __all__ = [
     "ClaudeSession",
@@ -30,5 +37,10 @@ __all__ = [
     "SlackConnectionError",
     "ClaudeProcessError",
     "SessionError",
-    "ConfigurationError"
+    "ConfigurationError",
+    "ResourceLimiter",
+    "get_resource_limiter",
+    "set_resource_limits",
+    "with_task_limit",
+    "with_session_limit"
 ]

@@ -20,6 +20,7 @@ from ..exceptions import SessionError, ClaudeProcessError
 from ..utils import setup_logging, ensure_directory_exists, validate_project_path
 from ..claude_client.subprocess_handler import SubprocessClaudeHandler
 from ..claude_client.message_streamer import MessageStreamer
+from ..resource_limits import with_session_limit, get_resource_limiter
 
 
 class SessionManager:
@@ -102,6 +103,7 @@ class SessionManager:
         
         self.logger.info("Session manager stopped")
     
+    @with_session_limit
     async def create_session(self, project_path: str, session_id: Optional[str] = None) -> ClaudeSession:
         """
         Create a new Claude session for a project.
@@ -305,7 +307,9 @@ class SessionManager:
                 latest_activity = datetime.min
 
                 for other_id, other_session in self.sessions.items():
-                    if other_id != session_id and other_session.status == SessionStatus.ACTIVE and other_session.last_activity > latest_activity:
+                    if (other_id != session_id and 
+                        other_session.status == SessionStatus.ACTIVE and 
+                        other_session.last_activity > latest_activity):
                         candidate_session_id = other_id
                         latest_activity = other_session.last_activity
                 

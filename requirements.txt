@@ -2,6 +2,7 @@
 slack-sdk>=3.36.0
 PyYAML>=6.0.2
 asyncio-mqtt>=0.11.0
+mcp[cli]>=0.1.0
 
 # Development dependencies
 pytest>=8.2.2
