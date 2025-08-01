@@ -157,16 +157,31 @@ class SessionManager:
             return session
         except Exception as e:
             # Cleanup partially created resources
+            self.logger.error(f"Failed to create session: {e}", exc_info=True)
+            
+            # Clean up message streamer
             if session.session_id in self.message_streamers:
-                await self.message_streamers[session.session_id].stop_streaming()
-                del self.message_streamers[session.session_id]
+                try:
+                    await self.message_streamers[session.session_id].stop_streaming()
+                except Exception as cleanup_error:
+                    self.logger.warning(f"Error stopping message streamer during cleanup: {cleanup_error}")
+                finally:
+                    del self.message_streamers[session.session_id]
+            
+            # Clean up subprocess handler
             if session.session_id in self.subprocess_handlers:
-                await self.subprocess_handlers[session.session_id].terminate_process()
-                del self.subprocess_handlers[session.session_id]
+                try:
+                    await self.subprocess_handlers[session.session_id].terminate_process()
+                except Exception as cleanup_error:
+                    self.logger.warning(f"Error terminating subprocess during cleanup: {cleanup_error}")
+                finally:
+                    del self.subprocess_handlers[session.session_id]
 
+            # Remove session from tracking
             if session.session_id in self.sessions:
                 del self.sessions[session.session_id]
-            raise SessionError(f"Failed to create session: {str(e)}")
+            
+            raise SessionError(f"Failed to create session: {str(e)}") from e
 
     async def _create_subprocess_handler(self, session: ClaudeSession) -> SubprocessClaudeHandler:
         subprocess_handler = SubprocessClaudeHandler(self.config.claude)
@@ -469,13 +484,23 @@ class SessionManager:
 
                 # Wait for any session to time out, or for 60 seconds
                 if timeout_tasks:
-                    done, pending = await asyncio.wait(timeout_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=60)
-                    # Cancel remaining tasks
-                    for task in pending:
-                        task.cancel()
-                    # Wait for cancellation to complete
-                    if pending:
-                        await asyncio.gather(*pending, return_exceptions=True)
+                    try:
+                        done, pending = await asyncio.wait(timeout_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=60)
+                        # Cancel remaining tasks
+                        for task in pending:
+                            task.cancel()
+                        # Wait for cancellation to complete
+                        if pending:
+                            try:
+                                await asyncio.gather(*pending, return_exceptions=True)
+                            except Exception as e:
+                                self.logger.warning(f"Error during task cancellation: {e}")
+                    except Exception as e:
+                        self.logger.error(f"Error in session timeout monitoring: {e}")
+                        # Cancel all tasks on error
+                        for task in timeout_tasks:
+                            if not task.done():
+                                task.cancel()
                 else:
                     await asyncio.sleep(60)
 

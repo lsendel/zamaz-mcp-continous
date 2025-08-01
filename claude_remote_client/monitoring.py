@@ -563,7 +563,8 @@ class HealthMonitor:
         try:
             import claude_remote_client
             return getattr(claude_remote_client, '__version__', 'unknown')
-        except:
+        except (ImportError, AttributeError) as e:
+            self.logger.warning(f"Failed to get version: {e}")
             return 'unknown'
 
 
